@@ -1,0 +1,77 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Release signing: put storeFile/storePassword/keyAlias/keyPassword into
+// keystore.properties (git-ignored). Without it, release builds are signed
+// with the local debug key so `assembleRelease` always yields an installable APK.
+def keystoreFile = rootProject.file('keystore.properties')
+def keystore = new Properties()
+if (keystoreFile.exists()) keystoreFile.withInputStream { keystore.load(it) }
+
+android {
+    namespace = 'org.recto.reader'
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = 'org.recto.reader'
+        minSdk = 21
+        targetSdk = 36
+        versionCode = 1
+        versionName = '1.0'
+    }
+
+    signingConfigs {
+        release {
+            if (keystoreFile.exists()) {
+                storeFile = rootProject.file(keystore['storeFile'])
+                storePassword = keystore['storePassword']
+                keyAlias = keystore['keyAlias']
+                keyPassword = keystore['keyPassword']
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled = true
+            shrinkResources = true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig = keystoreFile.exists() ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    // No Google-signed dependency metadata blob (keeps builds reproducible / F-Droid friendly).
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
+
+    lint {
+        abortOnError = true
+        checkReleaseBuilds = true
+        // UseRequiresApi: @RequiresApi lives in AndroidX, which this app deliberately does not use.
+        disable += ['GradleDependency', 'OldTargetApi', 'AndroidGradlePluginVersion', 'SetTextI18n',
+                    'ClickableViewAccessibility', 'MonochromeLauncherIcon', 'UseRequiresApi', 'Overdraw']
+    }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+}
+
+// Optional real-world sample files for the parser tests: RECTO_SAMPLES=/path/to/dir ./gradlew test
+tasks.withType(Test).configureEach {
+    systemProperty 'recto.samples', providers.environmentVariable('RECTO_SAMPLES').orElse('').get()
+}
+
+dependencies {
+    // Unit tests only - the app itself has zero dependencies.
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'net.sf.kxml:kxml2:2.3.0'
+}

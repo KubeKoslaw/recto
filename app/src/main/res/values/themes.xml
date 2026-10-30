@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="AppTheme.Light" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:colorPrimary">@color/light_bg</item>
+        <item name="android:colorPrimaryDark">@color/light_bg</item>
+        <item name="android:colorAccent">@color/light_accent</item>
+        <item name="android:colorBackground">@color/light_bg</item>
+        <item name="android:windowBackground">@color/light_bg</item>
+        <item name="android:textColorPrimary">@color/light_text</item>
+        <item name="android:textColorSecondary">@color/light_text2</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="23">true</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">true</item>
+    </style>
+
+    <style name="AppTheme.Dark" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:colorPrimary">@color/dark_bg</item>
+        <item name="android:colorPrimaryDark">@color/dark_bg</item>
+        <item name="android:colorAccent">@color/dark_accent</item>
+        <item name="android:colorBackground">@color/dark_bg</item>
+        <item name="android:windowBackground">@color/dark_bg</item>
+        <item name="android:textColorPrimary">@color/dark_text</item>
+        <item name="android:textColorSecondary">@color/dark_text2</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="23">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
+    </style>
+
+    <!-- Follows the system light/dark setting (values-night overrides the parent). -->
+    <style name="AppTheme" parent="AppTheme.Light" />
+
+    <style name="ReaderTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:colorAccent">@color/dark_accent</item>
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="23">false</item>
+    </style>
+
+    <style name="BarButton">
+        <item name="android:layout_width">48dp</item>
+        <item name="android:layout_height">48dp</item>
+        <item name="android:background">?android:attr/selectableItemBackgroundBorderless</item>
+        <item name="android:scaleType">center</item>
+        <item name="android:tint">#FFFFFF</item>
+    </style>
+
+    <style name="LibButton">
+        <item name="android:layout_width">48dp</item>
+        <item name="android:layout_height">48dp</item>
+        <item name="android:background">?android:attr/selectableItemBackgroundBorderless</item>
+        <item name="android:scaleType">center</item>
+        <item name="android:tint">?android:attr/textColorPrimary</item>
+    </style>
+</resources>

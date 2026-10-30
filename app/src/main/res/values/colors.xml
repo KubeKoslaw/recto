@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="light_bg">#FAF9F6</color>
+    <color name="light_text">#1C1B1A</color>
+    <color name="light_text2">#6B6863</color>
+    <color name="light_accent">#2F6F5E</color>
+    <color name="dark_bg">#121212</color>
+    <color name="dark_text">#ECEAE6</color>
+    <color name="dark_text2">#A5A29C</color>
+    <color name="dark_accent">#8CCFBB</color>
+    <color name="bar">#F0161616</color>
+    <color name="panel">#FF1C1C1C</color>
+    <color name="icon_bg">#2F6F5E</color>
+</resources>

@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">Recto</string>
+
+    <!-- Library -->
+    <string name="open_file">Open file</string>
+    <string name="add_folder">Add folder</string>
+    <string name="filter">Filter</string>
+    <string name="filter_hint">Title or author</string>
+    <string name="empty">No books yet.\n\nTap + to open a file, or add a folder so books, comics and documents in it show up here.\n\nPDF · EPUB · MOBI · AZW3 · FB2 · CBZ · CBR · CBT · DOCX · ODT · TXT · Markdown · HTML · images</string>
+    <string name="just_now">just now</string>
+    <string name="status_new">New</string>
+    <string name="no_picker">No file picker available on this device</string>
+    <string name="open">Open</string>
+    <string name="remove">Remove from library</string>
+    <string name="scanning">Looking for books…</string>
+    <string name="folders">Folders</string>
+    <string name="rescan">Rescan</string>
+    <string name="no_folders">No folders added. Books in added folders (and their subfolders) appear in the library automatically.</string>
+    <string name="remove_folder_q">Stop showing books from this folder? Files are not deleted.</string>
+    <string name="settings">Settings</string>
+    <string name="about">About</string>
+    <string name="app_theme">App theme</string>
+    <string name="theme_system">System</string>
+    <string name="keep_screen_on">Keep screen on while reading</string>
+    <string name="volume_keys">Volume keys turn pages</string>
+    <string name="tap_zones">Tap left / right edge to turn pages</string>
+    <string name="animations">Page turn animations</string>
+    <string name="fullscreen">Fullscreen reading</string>
+    <string name="auto_invert">Invert PDF colors in dark mode</string>
+    <string name="low_memory">Low memory mode for comics</string>
+    <string name="about_text">A minimal, fast reader for books, comics, manga and documents.\n\nFree and open source software (GPL-3.0-or-later). No ads, no tracking, no network access: the app cannot connect to the internet at all.</string>
+
+    <!-- Reader -->
+    <string name="back">Back</string>
+    <string name="contents">Contents</string>
+    <string name="search">Search</string>
+    <string name="search_hint">Search in book</string>
+    <string name="view_settings">View settings</string>
+    <string name="more">More options</string>
+    <string name="theme">Theme</string>
+    <string name="theme_auto">Auto</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_sepia">Sepia</string>
+    <string name="theme_dark">Dark</string>
+    <string name="theme_black">Black</string>
+    <string name="font_size">Text size</string>
+    <string name="font">Font</string>
+    <string name="font_book">Book</string>
+    <string name="font_serif">Serif</string>
+    <string name="font_sans">Sans</string>
+    <string name="font_mono">Mono</string>
+    <string name="line_spacing">Line spacing</string>
+    <string name="margins">Margins</string>
+    <string name="alignment">Alignment</string>
+    <string name="justify">Justify</string>
+    <string name="left">Left</string>
+    <string name="layout">Layout</string>
+    <string name="pages">Pages</string>
+    <string name="scroll">Scroll</string>
+    <string name="continuous">Continuous</string>
+    <string name="hyphenation">Hyphenation</string>
+    <string name="direction">Reading direction</string>
+    <string name="ltr">Left to right</string>
+    <string name="rtl">Right to left (manga)</string>
+    <string name="fit">Fit</string>
+    <string name="fit_page">Whole page</string>
+    <string name="fit_width">Width</string>
+    <string name="colors">Colors</string>
+    <string name="colors_normal">Normal</string>
+    <string name="colors_invert">Inverted</string>
+    <string name="default_comics">Use these settings for all comics</string>
+    <string name="default_docs">Use these settings for all documents</string>
+    <string name="saved">Saved</string>
+    <string name="rotation">Rotation</string>
+    <string name="rotation_auto">Auto</string>
+    <string name="rotation_portrait">Portrait</string>
+    <string name="rotation_landscape">Landscape</string>
+    <string name="go_to_page">Go to page</string>
+    <string name="go_to_percent">Go to position (%)</string>
+    <string name="book_info">Information</string>
+    <string name="info_title">Title</string>
+    <string name="info_author">Author</string>
+    <string name="info_format">Format</string>
+    <string name="info_pages">Pages</string>
+    <string name="info_chapters">Chapters</string>
+    <string name="info_file">File</string>
+    <string name="info_size">Size</string>
+    <string name="no_toc">This book has no table of contents</string>
+    <string name="page_n">Page %d</string>
+    <string name="no_results">Nothing found</string>
+    <string name="open_link">Open link?</string>
+    <string name="no_app">No app can open this link</string>
+    <string name="password">Password</string>
+    <string name="cannot_open">Cannot open</string>
+
+    <!-- Errors -->
+    <string name="err_access">The file cannot be accessed. It may have been moved or deleted - open it again from your file manager.</string>
+    <string name="err_format">This file format is not supported.</string>
+    <string name="err_corrupt">The file is damaged or not supported.</string>
+    <string name="err_memory">Not enough memory to open this file.</string>
+    <string name="err_too_large">The file is too large.</string>
+    <string name="err_no_images">No pictures found in this archive.</string>
+    <string name="err_rar">This CBR archive uses RAR compression, which no free software library can decode. Most comics are stored uncompressed and open fine; convert this one to CBZ (zip) to read it.</string>
+    <string name="err_7z">7-Zip archives (CB7) are not supported. Convert the file to CBZ (zip).</string>
+    <string name="err_pdf_password">Password-protected PDFs can only be opened on Android 15 or newer.</string>
+</resources>
