@@ -42,6 +42,12 @@ Android 7.0 and Android 16.
 * Text encoding detection for TXT files (UTF-8/16, windows-1250/1251/1252 and others).
 * English and Polish UI.
 
+## Download
+
+Pre-built APKs are available on the **[Releases](https://github.com/KubeKoslaw/recto/releases/latest)** page:
+* **[apk-debug.apk](https://github.com/KubeKoslaw/recto/releases/download/v1.0.0/apk-debug.apk)** (Debug build)
+* **[app-release.apk](https://github.com/KubeKoslaw/recto/releases/download/v1.0.0/app-release.apk)** (Optimized release build)
+
 ## Install
 
 Build it (below) and install `app/build/outputs/apk/release/app-release.apk`, e.g. with
