@@ -68,7 +68,8 @@ public final class FlowView extends FrameLayout {
     private static final Pattern HEAD_OPEN = Pattern.compile("<head\\b[^>]*>", Pattern.CASE_INSENSITIVE);
     private static final Pattern HEAD_CLOSE = Pattern.compile("</head\\s*>", Pattern.CASE_INSENSITIVE);
     private static final Pattern BODY_OPEN = Pattern.compile("<body\\b", Pattern.CASE_INSENSITIVE);
-    private static final String CSP = "script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
+    private static final String CSP = "script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; "
+            + "frame-src 'none'; worker-src 'none'; connect-src 'none'; manifest-src 'none'";
     private static String readerJs;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -80,7 +81,7 @@ public final class FlowView extends FrameLayout {
     private FlowBook book;
     private Style style = new Style();
     private int chapter = -1, page, pages = 1, textPos = -1;
-    private boolean loading, selecting;
+    private boolean loading, selecting, tapZones = true;
     private String target;
     private final List<int[]> back = new ArrayList<>(); // chapter, text position
     private long[] cumulative;
@@ -152,6 +153,9 @@ public final class FlowView extends FrameLayout {
 
     public void setSelecting(boolean s) { selecting = s; }
 
+    /** Side taps turn pages (true) or every tap opens the menu (false). */
+    public void setTapZones(boolean on) { tapZones = on; }
+
     public FlowBook book() { return book; }
 
     public int chapter() { return chapter; }
@@ -219,12 +223,30 @@ public final class FlowView extends FrameLayout {
         } else load(ch, t);
     }
 
-    /** Shows the n-th match of {@code query} in chapter {@code ch}. */
-    public void goFind(int ch, String query, int n) {
+    /**
+     * Shows the n-th match of {@code query} in chapter {@code ch}. {@code ctx} is
+     * {@link #matchContext} of that match, used to find it even if the page counts differently.
+     */
+    public void goFind(int ch, String query, int n, String ctx) {
         if (book == null) return;
+        String q = JSONObject.quote(query), c = JSONObject.quote(ctx == null ? "" : ctx);
         if (ch == chapter && !loading) {
-            web.evaluateJavascript("__R.find(" + JSONObject.quote(query) + "," + n + ")", null);
-        } else load(ch, "{\"t\":\"find\",\"v\":" + JSONObject.quote(query) + ",\"n\":" + n + "}");
+            web.evaluateJavascript("__R.find(" + q + "," + n + "," + c + ")", null);
+        } else load(ch, "{\"t\":\"find\",\"v\":" + q + ",\"n\":" + n + ",\"c\":" + c + "}");
+    }
+
+    /**
+     * Text just before a match (lower-cased chapter text, whitespace removed, at most 24 chars).
+     * Must stay in sync with {@code squash} / {@code follows} in reader.js.
+     */
+    public static String matchContext(String lower, int at) {
+        StringBuilder sb = new StringBuilder(24);
+        for (int i = at - 1; i >= Math.max(0, at - 200) && sb.length() < 24; i--) {
+            char c = lower.charAt(i);
+            if (Character.isWhitespace(c) || Character.isSpaceChar(c) || c == '\u200b' || c == '\ufeff') continue;
+            sb.append(c);
+        }
+        return sb.reverse().toString();
     }
 
     /** Global position 0..1 for the progress slider. */
@@ -389,7 +411,8 @@ public final class FlowView extends FrameLayout {
         @JavascriptInterface public void tap(float x, float y) {
             ui.post(() -> {
                 boolean rtl = book != null && book.rtl;
-                if (x < 0.3f) { if (rtl) next(); else prev(); }
+                if (!tapZones) { if (listener != null) listener.onCenterTap(); }
+                else if (x < 0.3f) { if (rtl) next(); else prev(); }
                 else if (x > 0.7f) { if (rtl) prev(); else next(); }
                 else if (listener != null) listener.onCenterTap();
             });
@@ -416,7 +439,11 @@ public final class FlowView extends FrameLayout {
         @Override public boolean shouldOverrideUrlLoading(WebView view, String url) { return override(url); }
 
         private boolean override(String url) {
-            if (book != null && url.startsWith(base) && url.contains(encodePath(book.chapters.get(chapter).path))) return false;
+            if (book != null && chapter >= 0) {
+                int hash = url.indexOf('#');
+                String page = hash >= 0 ? url.substring(0, hash) : url;
+                if (page.equals(base + encodePath(book.chapters.get(chapter).path))) return false; // the chapter being loaded
+            }
             onLink(url);
             return true;
         }

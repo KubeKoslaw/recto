@@ -89,7 +89,7 @@ public final class ZipArchive extends Archive {
                     if (usize == 0xffffffffL && q + 8 <= qe) { usize = u64(cd, q); q += 8; }
                     if (csize == 0xffffffffL && q + 8 <= qe) { csize = u64(cd, q); q += 8; }
                     if (lho == 0xffffffffL && q + 8 <= qe) lho = u64(cd, q);
-                } else if (id == 0x7075 && sz > 5) { // Info-ZIP Unicode path
+                } else if (id == 0x7075 && qe - q > 5) { // Info-ZIP Unicode path
                     name = new String(cd, q + 5, qe - q - 5, StandardCharsets.UTF_8);
                 }
                 x += 4 + sz;
