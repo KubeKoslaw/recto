@@ -205,6 +205,115 @@ public class BooksTest {
         assertEquals("ab @ @ ", out.toString("ISO-8859-1").substring(0, 7));
     }
 
+    /** A minimal MOBI 6 file: uncompressed text record, one JPEG record, EXTH title / author / cover. */
+    static byte[] mobi6(String html, byte[] jpeg) {
+        byte[] text = html.getBytes(StandardCharsets.UTF_8);
+        java.io.ByteArrayOutputStream exth = new java.io.ByteArrayOutputStream();
+        Object[][] recs = {{503, "Synthetic".getBytes(StandardCharsets.UTF_8)}, {100, "Tester".getBytes(StandardCharsets.UTF_8)}, {201, new byte[4]}};
+        for (Object[] r : recs) {
+            byte[] v = (byte[]) r[1];
+            put32(exth, (Integer) r[0]);
+            put32(exth, v.length + 8);
+            exth.write(v, 0, v.length);
+        }
+        byte[] ex = exth.toByteArray();
+        byte[] h0 = new byte[16 + 0xe8 + 12 + ex.length];
+        java.nio.ByteBuffer b = java.nio.ByteBuffer.wrap(h0);
+        b.putShort(0, (short) 1).putInt(4, text.length).putShort(8, (short) 1);
+        b.put(16, (byte) 'M').put(17, (byte) 'O').put(18, (byte) 'B').put(19, (byte) 'I');
+        b.putInt(20, 0xe8).putInt(28, 65001).putInt(36, 6).putInt(108, 2).putInt(128, 0x40).putInt(0xf4, -1);
+        int p = 16 + 0xe8;
+        b.put(p, (byte) 'E').put(p + 1, (byte) 'X').put(p + 2, (byte) 'T').put(p + 3, (byte) 'H');
+        b.putInt(p + 4, 12 + ex.length).putInt(p + 8, recs.length);
+        System.arraycopy(ex, 0, h0, p + 12, ex.length);
+        byte[][] records = {h0, text, jpeg};
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        byte[] pdb = new byte[78];
+        byte[] tag = "BOOKMOBI".getBytes(StandardCharsets.US_ASCII);
+        System.arraycopy(tag, 0, pdb, 60, 8);
+        pdb[77] = (byte) records.length;
+        out.write(pdb, 0, 78);
+        int off = 78 + records.length * 8;
+        for (byte[] r : records) {
+            put32(out, off);
+            put32(out, 0);
+            off += r.length;
+        }
+        for (byte[] r : records) out.write(r, 0, r.length);
+        return out.toByteArray();
+    }
+
+    static void put32(java.io.ByteArrayOutputStream o, int v) {
+        o.write(v >>> 24);
+        o.write(v >>> 16);
+        o.write(v >>> 8);
+        o.write(v);
+    }
+
+    static final class Tracked implements org.recto.reader.io.Seekable {
+        final BytesSeekable in;
+        boolean closed;
+
+        Tracked(byte[] d) { in = new BytesSeekable(d); }
+
+        @Override public long size() { return in.size(); }
+
+        @Override public int read(long pos, byte[] b, int off, int len) { return in.read(pos, b, off, len); }
+
+        @Override public void close() { closed = true; }
+    }
+
+    @Test public void mobi6AnchorsLazyPicturesAndClose() throws Exception {
+        byte[] jpeg = {(byte) 0xff, (byte) 0xd8, (byte) 0xff, (byte) 0xe0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+        String head = "<html><body><p>Start <a filepos=XXXXXXXXXX>link</a> <a filepos=YYYYYYYYYY>pic</a></p><mbp:pagebreak/>";
+        String tail = "<p>Second <img recindex=\"00001\"> after</p></body></html>";
+        int second = head.length(), insideImg = head.length() + tail.indexOf("recindex");
+        String html = (head + tail).replace("XXXXXXXXXX", String.format("%010d", second)).replace("YYYYYYYYYY", String.format("%010d", insideImg));
+        Tracked src = new Tracked(mobi6(html, jpeg));
+        FlowBook b = MobiBook.parse(src, "x.mobi");
+        assertEquals("Synthetic", b.title);
+        assertEquals("Tester", b.author);
+        assertEquals(2, b.chapters.size());
+        String c0 = b.chapterHtml(0), c1 = b.chapterHtml(1);
+        assertTrue(c0, c0.contains("href=\"c1.html#fp" + second + "\""));
+        assertTrue(c0, c0.contains("href=\"c1.html#fp" + insideImg + "\""));
+        // Anchor at a tag boundary stays before the tag; one inside a tag moves after it.
+        assertTrue(c1, c1.contains("<a id=\"fp" + second + "\"></a><p>Second"));
+        assertTrue(c1, c1.contains("<img src=\"img/1\"><a id=\"fp" + insideImg + "\"></a> after"));
+        FlowBook.Resource r = b.resource("img/1");
+        assertEquals("image/jpeg", r.mime);
+        assertTrue(java.util.Arrays.equals(jpeg, org.recto.reader.util.Text.readAll(r.data, 1 << 20)));
+        assertTrue(java.util.Arrays.equals(jpeg, b.cover()));
+        assertTrue(java.util.Arrays.equals(jpeg, MobiBook.cover(new BytesSeekable(mobi6(html, jpeg)))));
+        assertFalse(src.closed);
+        b.close();
+        assertTrue("the book owns and closes its file", src.closed);
+    }
+
+    @Test public void markdownLongDocumentIsSplit() throws Exception {
+        StringBuilder md = new StringBuilder();
+        for (int c = 1; c <= 4; c++) {
+            md.append("# Part ").append(c).append("\n\n");
+            for (int i = 0; i < 400; i++) md.append("Paragraph ").append(i).append(" of some reasonably long text here.\n\n");
+        }
+        MemBook b = TextBooks.markdown(md.toString().getBytes(StandardCharsets.UTF_8), "long.md");
+        assertTrue("chapters " + b.chapters.size(), b.chapters.size() >= 2);
+        for (FlowBook.TocEntry e : b.toc) {
+            assertTrue(b.chapterHtml(e.chapter).contains("id=\"" + e.anchor + "\""));
+        }
+    }
+
+    @Test public void chapterIndexIsCaseInsensitive() {
+        MemBook b = new MemBook();
+        b.addChapter("a");
+        b.addChapter("b");
+        assertEquals(1, b.chapterIndex("c1.html"));
+        assertEquals(1, b.chapterIndex("C1.HTML"));
+        assertEquals(-1, b.chapterIndex("c9.html"));
+        b.addChapter("c"); // index follows chapters added later
+        assertEquals(2, b.chapterIndex("c2.html"));
+    }
+
     // ---- real files (RECTO_SAMPLES) ---------------------------------------------------------------
 
     static FlowBook mobi(String name) throws Exception {

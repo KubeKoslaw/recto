@@ -36,14 +36,32 @@ public final class MobiBook {
 
     // ---- PDB records ---------------------------------------------------------------------------
 
-    private byte[] record(int i) throws IOException {
+    private byte[] record(int i) throws IOException { return recordHead(i, Integer.MAX_VALUE); }
+
+    /** The first {@code max} bytes of a record (the whole record if it is shorter). */
+    private byte[] recordHead(int i, int max) throws IOException {
         if (i < 0 || i >= offsets.length) throw new IOException("Bad record " + i);
         long start = offsets[i] & 0xffffffffL, end = i + 1 < offsets.length ? offsets[i + 1] & 0xffffffffL : fileSize;
         if (end < start || end > fileSize) throw new IOException("Corrupt record table");
-        byte[] b = new byte[(int) (end - start)];
+        byte[] b = new byte[(int) Math.min(max, end - start)];
         src.readFully(start, b, 0, b.length);
         return b;
     }
+
+    private void readTable() throws IOException {
+        fileSize = src.size();
+        byte[] pdb = new byte[78];
+        src.readFully(0, pdb, 0, 78);
+        int n = u16(pdb, 76);
+        if (n <= 0) throw new IOException("Invalid MOBI file");
+        byte[] table = new byte[n * 8];
+        src.readFully(78, table, 0, table.length);
+        offsets = new int[n];
+        for (int i = 0; i < n; i++) offsets[i] = u32(table, i * 8);
+        this.pdb = pdb;
+    }
+
+    private byte[] pdb;
 
     static int u16(byte[] b, int p) { return p + 1 < b.length ? (b[p] & 0xff) << 8 | (b[p + 1] & 0xff) : 0; }
 
@@ -405,21 +423,33 @@ public final class MobiBook {
         }
     }
 
-    private FlowBook run(String name) throws IOException {
-        fileSize = src.size();
-        byte[] pdb = new byte[78];
-        src.readFully(0, pdb, 0, 78);
-        int n = u16(pdb, 76);
-        if (n <= 0) throw new IOException("Invalid MOBI file");
-        byte[] table = new byte[n * 8];
-        src.readFully(78, table, 0, table.length);
-        offsets = new int[n];
-        for (int i = 0; i < n; i++) offsets[i] = u32(table, i * 8);
+    /**
+     * Only the cover picture (EXTH 201), without decompressing the text: used for library
+     * thumbnails. Returns null if the book has no cover.
+     */
+    public static byte[] cover(Seekable src) throws IOException {
+        MobiBook m = new MobiBook();
+        m.src = src;
+        try {
+            m.readTable();
+            Header h = m.header(0);
+            byte[] c = h.exth.get(201);
+            if (c == null || c.length < 4 || u32(c, 0) == NULL || h.firstImage == NULL || h.firstImage <= 0) return null;
+            byte[] img = m.record(h.firstImage + u32(c, 0));
+            return Text.sniffImage(img, img.length) != null ? img : null;
+        } catch (RuntimeException e) {
+            throw new IOException("Invalid MOBI file", e);
+        }
+    }
 
+    private FlowBook run(String name) throws IOException {
+        readTable();
+        int n = offsets.length;
         Header h = header(0);
         if (!magic(pdb, 60, "BOOKMOBI")) {
             MemBook b = TextBooks.txt(text(h), name);
             b.title = new String(pdb, 0, 32, StandardCharsets.ISO_8859_1).trim().replace("\u0000", "");
+            b.source = src;
             return b;
         }
         Header k8 = null;
@@ -457,8 +487,9 @@ public final class MobiBook {
         byte[] cover = h.exth.get(201);
         if (cover != null && cover.length >= 4 && u32(cover, 0) != NULL) {
             String p = "img/" + (u32(cover, 0) + 1);
-            if (book.resources.containsKey(p)) book.coverPath = p;
+            if (book.hasResource(p)) book.coverPath = p;
         }
+        book.source = src; // pictures and fonts are read from the file on demand
         return book;
     }
 
@@ -469,13 +500,17 @@ public final class MobiBook {
         return s.isEmpty() ? def : s;
     }
 
-    /** Images and fonts referenced as 1-based resource numbers from {@code first}. */
+    /**
+     * Images and fonts referenced as 1-based resource numbers from {@code first}. Only the record
+     * headers are read here; the data is loaded from the file when the page asks for it, so
+     * picture-heavy books (comics converted to AZW3) do not have to fit in memory.
+     */
     private void addResources(MemBook b, int first) {
         if (first == NULL || first <= 0) return;
         for (int i = first, k = 1; i < offsets.length; i++, k++) {
             byte[] r;
             try {
-                r = record(i);
+                r = recordHead(i, 16);
             } catch (IOException e) {
                 break;
             }
@@ -485,13 +520,17 @@ public final class MobiBook {
                 if (magic(r, 0, "BOUNDARY")) break;
                 continue;
             }
+            final int rec = i;
             if (magic(r, 0, "FONT")) {
-                byte[] f = font(r);
-                if (f != null) b.addResource("img/" + k, "font/ttf", f);
+                b.addResource("img/" + k, "font/ttf", () -> {
+                    byte[] f = font(record(rec));
+                    if (f == null) throw new IOException("Bad font record");
+                    return f;
+                });
                 continue;
             }
             String mime = Text.sniffImage(r, r.length);
-            if (mime != null) b.addResource("img/" + k, mime, r);
+            if (mime != null) b.addResource("img/" + k, mime, () -> record(rec));
         }
     }
 
@@ -554,18 +593,15 @@ public final class MobiBook {
                 }
             } catch (IOException ignored) {}
         }
-        // Insert anchors at every target offset, back to front.
-        StringBuilder sb = new StringBuilder(s);
-        for (Integer pos : targets.descendingKeySet()) {
-            int p = Math.min(pos, sb.length());
-            // Never split a tag.
-            int lt = sb.lastIndexOf("<", p - 1), gt = sb.lastIndexOf(">", p - 1);
-            if (lt > gt) {
-                int close = sb.indexOf(">", p);
-                if (close >= 0) p = close + 1;
-            }
-            sb.insert(p, "<a id=\"fp" + pos + "\"></a>");
+        // Insert anchors at every target offset in one forward pass (never splitting a tag).
+        StringBuilder sb = new StringBuilder(s.length() + targets.size() * 24);
+        int from = 0;
+        for (Integer pos : targets.keySet()) {
+            int p = Math.max(from, outsideTag(s, Math.min(pos, s.length())));
+            sb.append(s, from, p).append("<a id=\"fp").append(pos).append("\"></a>");
+            from = p;
         }
+        sb.append(s, from, s.length());
         // Anchors placed just before a page break belong to the next page.
         s = sb.toString().replaceAll("(?i)((?:<a id=\"fp\\d+\"></a>\\s*)+)(<mbp:pagebreak\\s*/?>)", "$2$1");
         s = FILEPOS.matcher(s).replaceAll("href=\"#fp$1\"");
@@ -701,7 +737,7 @@ public final class MobiBook {
         for (Object[] e : ncx) b.toc.add(new FlowBook.TocEntry((String) e[0], (Integer) e[1], (Integer) e[2], (String) e[3]));
         // Resources are shared with the MOBI 6 part in joint files.
         int first = k.firstImage != NULL ? k.abs(k.firstImage) : NULL;
-        if (k != mobi6 && (first == NULL || first >= offsets.length || Text.sniffImage(record(first), 16) == null))
+        if (k != mobi6 && (first == NULL || first >= offsets.length || sniffRecord(first) == null))
             first = mobi6.firstImage;
         addResources(b, first);
         for (int i = 1; i < flows.size(); i++) {
@@ -712,8 +748,9 @@ public final class MobiBook {
                 Matcher m = KINDLE_EMBED.matcher(flow);
                 StringBuffer out = new StringBuffer();
                 while (m.find()) {
-                    Object[] r = b.resources.get("img/" + b32(m.group(1)));
-                    String uri = r == null ? "" : "data:" + r[0] + ";base64," + Text.base64Encode((byte[]) r[1]);
+                    String path = "img/" + b32(m.group(1));
+                    byte[] data = b.resourceBytes(path);
+                    String uri = data == null ? "" : "data:" + b.resourceMime(path) + ";base64," + Text.base64Encode(data);
                     m.appendReplacement(out, Matcher.quoteReplacement(uri));
                 }
                 m.appendTail(out);
@@ -724,6 +761,11 @@ public final class MobiBook {
             }
         }
         return b;
+    }
+
+    private String sniffRecord(int i) throws IOException {
+        byte[] r = recordHead(i, 16);
+        return Text.sniffImage(r, r.length);
     }
 
     private static String resolveEmbeds(String s, String prefix) {
@@ -786,11 +828,14 @@ public final class MobiBook {
         return p;
     }
 
-    private static int outsideTag(StringBuilder s, int p) {
-        int lt = s.lastIndexOf("<", p - 1), gt = s.lastIndexOf(">", p - 1);
-        if (lt > gt) {
-            int close = s.indexOf(">", p);
-            if (close >= 0) return close + 1;
+    private static int outsideTag(CharSequence s, int p) {
+        for (int i = p - 1; i >= 0; i--) {
+            char c = s.charAt(i);
+            if (c == '>') return p;
+            if (c == '<') {
+                for (int k = p, n = s.length(); k < n; k++) if (s.charAt(k) == '>') return k + 1;
+                return p;
+            }
         }
         return p;
     }

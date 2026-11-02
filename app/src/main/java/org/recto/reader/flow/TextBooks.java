@@ -123,6 +123,11 @@ public final class TextBooks {
             + "blockquote{margin:.8em 0;padding-left:.9em;border-left:3px solid rgba(127,127,127,.5)}"
             + "table{border-collapse:collapse}td,th{border:1px solid rgba(127,127,127,.5);padding:.2em .5em}";
 
+    private static final Pattern MD_LIST = Pattern.compile("[-*+]\\s+.*|\\d{1,9}[.)]\\s+.*");
+    private static final Pattern MD_LIST_MARK = Pattern.compile("^([-*+]|\\d{1,9}[.)])\\s+");
+    private static final Pattern MD_RULE = Pattern.compile("-{3,}|\\*{3,}|_{3,}");
+    private static final Pattern MD_HEADING = Pattern.compile("^(#{1,6})\\s+(.*?)\\s*#*$");
+
     public static MemBook markdown(byte[] data, String name) {
         String[] lines = Text.decode(data).replace("\r\n", "\n").replace('\r', '\n').split("\n", -1);
         MemBook b = new MemBook();
@@ -145,9 +150,10 @@ public final class TextBooks {
                 continue;
             }
             String t = line.trim();
-            boolean isList = t.matches("[-*+]\\s+.*") || t.matches("\\d{1,9}[.)]\\s+.*");
+            boolean isList = MD_LIST.matcher(t).matches();
+            boolean isRule = MD_RULE.matcher(t).matches();
             if (t.isEmpty() || t.startsWith("#") || t.startsWith("```") || t.startsWith("~~~") || t.startsWith(">") != quote
-                    || isList || t.matches("(-{3,}|\\*{3,}|_{3,})")) {
+                    || isList || isRule) {
                 if (para.length() > 0) {
                     out.append("<p>").append(inline(para.toString())).append("</p>");
                     para.setLength(0);
@@ -173,17 +179,22 @@ public final class TextBooks {
                 t = t.substring(1).trim();
                 if (t.isEmpty()) continue;
             }
-            Matcher h = Pattern.compile("^(#{1,6})\\s+(.*?)\\s*#*$").matcher(t);
+            Matcher h = MD_HEADING.matcher(t);
             if (h.find()) {
                 int level = h.group(1).length();
                 String text = h.group(2);
+                // Long documents are split at top-level headings (outside lists and quotes).
+                if (level <= 2 && listType == null && !quote && out.length() > CHAPTER_CHARS) {
+                    b.addChapter(MemBook.page(b.title, null, MD_CSS, out));
+                    out.setLength(0);
+                }
                 String id = "h" + (++headings);
                 out.append("<h").append(level).append(" id=\"").append(id).append("\">").append(inline(text)).append("</h").append(level).append('>');
-                if (level <= 3) b.toc.add(new FlowBook.TocEntry(FlowBook.htmlToText(inline(text)), level - 1, 0, id));
+                if (level <= 3) b.toc.add(new FlowBook.TocEntry(FlowBook.htmlToText(inline(text)), level - 1, b.chapters.size(), id));
                 if (level == 1 && headings == 1) b.title = FlowBook.htmlToText(inline(text));
                 continue;
             }
-            if (t.matches("(-{3,}|\\*{3,}|_{3,})")) {
+            if (isRule) {
                 out.append("<hr/>");
                 continue;
             }
@@ -196,7 +207,7 @@ public final class TextBooks {
                 } else {
                     out.append("</li><li>");
                 }
-                out.append(inline(t.replaceFirst("^([-*+]|\\d{1,9}[.)])\\s+", "")));
+                out.append(inline(MD_LIST_MARK.matcher(t).replaceFirst("")));
                 continue;
             }
             if (listType != null) {
@@ -210,7 +221,7 @@ public final class TextBooks {
         if (code) out.append("</code></pre>");
         if (listType != null) out.append("</li></").append(listType).append('>');
         if (quote) out.append("</blockquote>");
-        b.addChapter(MemBook.page(b.title, null, MD_CSS, out));
+        if (out.length() > 0 || b.chapters.isEmpty()) b.addChapter(MemBook.page(b.title, null, MD_CSS, out));
         if (b.toc.size() < 2) b.toc.clear();
         return b;
     }
