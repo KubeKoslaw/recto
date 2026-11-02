@@ -4,7 +4,6 @@ import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
@@ -51,6 +50,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Shows one document: fixed pages ({@link PageView}) or reflowable text ({@link FlowView}). */
 public final class ReaderActivity extends Activity implements PageView.Listener, FlowView.Listener {
@@ -347,6 +347,16 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
         long now = System.currentTimeMillis();
         entry = library.find(d.id);
         if (entry == null) {
+            // Same document known under another id (e.g. found by a folder scan without its size).
+            Library.Book same = library.findByUri(uri.toString());
+            if (same != null) {
+                library.remove(same.id);
+                Covers.forget(this, same.id);
+                entry = same.copy();
+                entry.id = d.id;
+            }
+        }
+        if (entry == null) {
             entry = new Library.Book();
             entry.id = d.id;
             entry.added = now;
@@ -397,6 +407,7 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
     private void showFlow(Opener.Doc d) {
         flowView = new FlowView(this);
         flowView.setListener(this);
+        flowView.setTapZones(prefs.tapZones());
         content.addView(flowView, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         int ch = 0, tp = -1;
         float frac = 0;
@@ -615,12 +626,27 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
         updateBack();
     }
 
+    /** Link schemes handed to other apps (file:// would crash with FileUriExposedException). */
+    private static boolean externalScheme(String scheme) {
+        if (scheme == null) return false;
+        switch (scheme.toLowerCase(Locale.ROOT)) {
+            case "http": case "https": case "mailto": case "tel": case "geo":
+                return true;
+            default:
+                return false;
+        }
+    }
+
     @Override public void onExternalLink(String url) {
+        if (url == null || !externalScheme(Uri.parse(url).getScheme())) {
+            Toast.makeText(this, R.string.no_app, Toast.LENGTH_SHORT).show();
+            return;
+        }
         dialog().setTitle(R.string.open_link).setMessage(url)
                 .setPositiveButton(android.R.string.ok, (d, w) -> {
                     try {
                         startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
-                    } catch (ActivityNotFoundException | SecurityException e) {
+                    } catch (RuntimeException e) { // no app, not allowed, or a URI the system refuses
                         Toast.makeText(this, R.string.no_app, Toast.LENGTH_SHORT).show();
                     }
                 })
@@ -980,12 +1006,15 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
         box.addView(spinner, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(4)));
         box.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(320)));
         final AlertDialog d = b.setTitle(R.string.search).setView(box).setNegativeButton(android.R.string.cancel, null).create();
-        final boolean[] cancel = {false};
+        // Each search has its own cancel flag: a new search or closing the dialog stops the old one.
+        final AtomicBoolean[] running = {null};
         final String[] query = {null};
-        d.setOnDismissListener(x -> cancel[0] = true);
+        d.setOnDismissListener(x -> {
+            if (running[0] != null) running[0].set(true);
+        });
         list.setOnItemClickListener((p, v, pos, id) -> {
             Object[] h = hits.get(pos);
-            if (flowView != null) flowView.goFind((Integer) h[0], query[0], (Integer) h[1]);
+            if (flowView != null) flowView.goFind((Integer) h[0], query[0], (Integer) h[1], (String) h[2]);
             else if (pageView != null) {
                 pageView.goTo((Integer) h[0], 0);
                 @SuppressWarnings("unchecked") List<RectF> rects = (List<RectF>) h[1];
@@ -1002,7 +1031,9 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
             adapter.clear();
             spinner.setVisibility(View.VISIBLE);
             final int token = q.hashCode() ^ (int) System.nanoTime();
-            cancel[0] = false;
+            if (running[0] != null) running[0].set(true);
+            final AtomicBoolean cancel = new AtomicBoolean();
+            running[0] = cancel;
             list.setTag(token);
             new Thread(() -> runSearch(q, hits, adapter, spinner, list, token, cancel), "search").start();
             return true;
@@ -1011,20 +1042,22 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
         d.show();
     }
 
-    private void runSearch(String q, List<Object[]> hits, ArrayAdapter<String> adapter, ProgressBar spinner, ListView list, int token, boolean[] cancel) {
-        String lq = q.toLowerCase(Locale.getDefault());
+    private void runSearch(String q, List<Object[]> hits, ArrayAdapter<String> adapter, ProgressBar spinner, ListView list, int token, AtomicBoolean cancel) {
+        // Locale-independent, like JavaScript's toLowerCase() used by the page.
+        String lq = q.toLowerCase(Locale.ROOT);
         int found = 0;
         try {
             if (flowView != null && doc != null && doc.book != null) {
                 FlowBook b = doc.book;
-                for (int ch = 0; ch < b.chapters.size() && !cancel[0] && found < 300; ch++) {
+                for (int ch = 0; ch < b.chapters.size() && !cancel.get() && found < 300; ch++) {
                     String text = b.chapterText(ch);
-                    String lower = text.toLowerCase(Locale.getDefault());
+                    String lower = text.toLowerCase(Locale.ROOT);
+                    if (lower.length() != text.length()) lower = text; // keep snippet offsets valid
                     int n = 0;
                     List<Object[]> batch = new ArrayList<>();
                     List<String> labels = new ArrayList<>();
                     for (int i = lower.indexOf(lq); i >= 0 && found < 300; i = lower.indexOf(lq, i + Math.max(1, lq.length()))) {
-                        batch.add(new Object[]{ch, n++});
+                        batch.add(new Object[]{ch, n++, FlowView.matchContext(lower, i)});
                         labels.add(snippet(text, i, q.length()));
                         found++;
                     }
@@ -1032,11 +1065,12 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
                 }
             } else if (doc != null && doc.pages instanceof PdfSource && PdfSource.canSearch()) {
                 PdfSource pdf = (PdfSource) doc.pages;
-                for (int p = 0; p < pdf.count() && !cancel[0] && found < 300; p++) {
+                for (int p = 0; p < pdf.count() && !cancel.get() && found < 300; p++) {
                     List<RectF> rects = pdf.search(p, q);
                     if (rects.isEmpty()) continue;
                     String text = pdf.text(p);
-                    int i = text.toLowerCase(Locale.getDefault()).indexOf(lq);
+                    String lower = text.toLowerCase(Locale.ROOT);
+                    int i = lower.length() == text.length() ? lower.indexOf(lq) : -1;
                     List<Object[]> batch = new ArrayList<>();
                     List<String> labels = new ArrayList<>();
                     batch.add(new Object[]{p, rects});

@@ -59,6 +59,7 @@ public final class RarArchive extends Archive {
             long add = 0;
             if (type == 0x73 && (flags & 0x80) != 0) throw new IOException("Encrypted archives are not supported");
             if (type == 0x74) {
+                if (hsize < ((flags & 0x100) != 0 ? 40 : 32)) throw new IOException("Corrupt RAR archive");
                 byte[] fh = new byte[hsize];
                 src.readFully(pos, fh, 0, hsize);
                 long pack = u32(fh, 7), unp = u32(fh, 11);

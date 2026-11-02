@@ -117,6 +117,31 @@
 
   function walker() { return document.createTreeWalker(body(), NodeFilter.SHOW_TEXT, null, false); }
 
+  /* Text nodes of the body with their character offsets; rebuilt only when the DOM changes
+     (search highlights), so positions are found by binary search instead of a full walk. */
+  var tcache = null;
+  function texts() {
+    if (tcache) return tcache;
+    var w = walker(), n, nodes = [], starts = [], total = 0;
+    while ((n = w.nextNode())) { nodes.push(n); starts.push(total); total += n.length; }
+    tcache = {nodes: nodes, starts: starts, total: total, text: null};
+    return tcache;
+  }
+  function textChanged() { tcache = null; }
+
+  /** Index of the node containing character offset pos (-1 past the end). */
+  function nodeAt(pos) {
+    var t = texts(), lo = 0, hi = t.nodes.length - 1;
+    if (hi < 0 || pos >= t.total) return -1;
+    while (lo < hi) {
+      var mid = (lo + hi + 1) >> 1;
+      if (t.starts[mid] <= pos) lo = mid; else hi = mid - 1;
+    }
+    return lo;
+  }
+
+  function isAfter(rc) { return scroll ? rc.bottom > m[0] * 0.5 : rc.right > m[3] + 1; }
+
   /** Reading position as a character offset (the sticky anchor). */
   R.textPos = function () {
     if (anchorPos < 0) anchorPos = firstVisible();
@@ -125,44 +150,47 @@
 
   /** Character offset of the first visible character. */
   function firstVisible() {
-    var w = walker(), n, total = 0, range = document.createRange();
-    while ((n = w.nextNode())) {
-      var len = n.length;
-      if (!/\S/.test(n.data)) { total += len; continue; }
-      range.selectNodeContents(n);
-      var rects = range.getClientRects(), after = false;
-      for (var k = 0; k < rects.length; k++) {
-        var rc = rects[k];
-        if (scroll ? rc.bottom > m[0] * 0.5 : rc.right > m[3] + 1) { after = true; break; }
-      }
-      if (after) {
-        var lo = 0, hi = len - 1;
-        while (lo < hi) {
-          var mid = (lo + hi) >> 1;
-          range.setStart(n, mid);
-          range.setEnd(n, mid + 1);
-          var rr = range.getBoundingClientRect();
-          if ((scroll ? rr.bottom > m[0] * 0.5 : rr.right > m[3] + 1) || (!rr.width && !rr.height)) hi = mid; else lo = mid + 1;
+    var t = texts(), nodes = t.nodes, range = document.createRange(), memo = {};
+    /* State of a node: 1 reaches the visible page, 0 before it, -1 no box (blank / hidden). */
+    function state(i) {
+      if (memo[i] !== undefined) return memo[i];
+      var n = nodes[i], st = -1;
+      if (/\S/.test(n.data)) {
+        range.selectNodeContents(n);
+        var rects = range.getClientRects();
+        if (rects.length) {
+          st = 0;
+          for (var k = 0; k < rects.length; k++) if (isAfter(rects[k])) { st = 1; break; }
         }
-        return total + lo;
       }
-      total += len;
+      return (memo[i] = st);
     }
-    return total;
+    /* First node at or after i that has a box (nodes.length if none). */
+    function known(i) { while (i < nodes.length && state(i) < 0) i++; return i; }
+    // Text runs in reading order, so "reaches the page" flips from 0 to 1 once: binary search.
+    var lo = 0, hi = nodes.length;
+    while (lo < hi) {
+      var mid = (lo + hi) >> 1, j = known(mid);
+      if (j >= nodes.length || state(j) === 1) hi = mid; else lo = j + 1;
+    }
+    var i = known(lo);
+    if (i >= nodes.length) return t.total;
+    var n = nodes[i], a = 0, b = n.length - 1;
+    while (a < b) {
+      var c = (a + b) >> 1;
+      range.setStart(n, c);
+      range.setEnd(n, c + 1);
+      var rr = range.getBoundingClientRect();
+      if (isAfter(rr) || (!rr.width && !rr.height)) b = c; else a = c + 1;
+    }
+    return t.starts[i] + a;
   }
 
   /** Shows the page containing a character offset, which becomes the anchor. */
   R.goText = function (pos) {
-    var w = walker(), n, total = 0, found = false;
-    while ((n = w.nextNode())) {
-      if (total + n.length > pos) {
-        showRect(rectOf(n, Math.max(0, pos - total)));
-        found = true;
-        break;
-      }
-      total += n.length;
-    }
-    if (!found) show(count - 1);
+    var i = nodeAt(pos), t = texts();
+    if (i >= 0) showRect(rectOf(t.nodes[i], Math.max(0, pos - t.starts[i])));
+    else show(count - 1);
     anchorPos = pos;
   };
 
@@ -178,37 +206,77 @@
   R.go = function (p) { measure(); go(p); };
 
   function clearHit() {
-    if (!hit || !hit.parentNode) { hit = null; return; }
-    var p = hit.parentNode;
-    while (hit.firstChild) p.insertBefore(hit.firstChild, hit);
-    p.removeChild(hit);
-    p.normalize();
+    if (!hit) return;
+    var marks = hit;
     hit = null;
+    for (var i = 0; i < marks.length; i++) {
+      var mk = marks[i], p = mk.parentNode;
+      if (!p) continue;
+      while (mk.firstChild) p.insertBefore(mk.firstChild, mk);
+      p.removeChild(mk);
+      p.normalize();
+    }
+    textChanged();
   }
 
-  /** Highlights and shows the n-th (0-based) case-insensitive match. */
-  R.find = function (q, n) {
-    clearHit();
-    var lq = q.toLowerCase(), k = 0, w = walker(), node;
-    while ((node = w.nextNode())) {
-      var t = node.data.toLowerCase(), i = t.indexOf(lq);
-      while (i >= 0) {
-        if (k === n) {
-          var r = document.createRange();
-          r.setStart(node, i);
-          r.setEnd(node, i + q.length);
-          var mk = document.createElement('mark');
-          mk.style.cssText = 'background:#ffd54f!important;color:#000!important';
-          try { r.surroundContents(mk); hit = mk; } catch (e) {}
-          showRect((hit || r).getBoundingClientRect());
-          anchorPos = -1;
-          return 1;
-        }
-        k++;
-        i = t.indexOf(lq, i + Math.max(1, lq.length));
-      }
+  function squash(s) { return s.replace(/[\s\u200b\ufeff]+/g, ''); }
+
+  /** Marks [start, start+len) of the body text, which may span several elements. */
+  function highlight(start, len) {
+    var t = texts(), end = start + len, marks = [], range = null;
+    for (var i = Math.max(0, nodeAt(start)); i < t.nodes.length && t.starts[i] < end; i++) {
+      var node = t.nodes[i], a = Math.max(0, start - t.starts[i]), b = Math.min(node.length, end - t.starts[i]);
+      if (b <= a) continue;
+      var r = document.createRange();
+      r.setStart(node, a);
+      r.setEnd(node, b);
+      if (!range) range = r;
+      var mk = document.createElement('mark');
+      mk.style.cssText = 'background:#ffd54f!important;color:#000!important';
+      try { r.surroundContents(mk); marks.push(mk); } catch (e) {}
     }
-    return 0;
+    textChanged();
+    hit = marks;
+    return marks.length ? marks[0].getBoundingClientRect() : range ? range.getBoundingClientRect() : null;
+  }
+
+  /**
+   * Highlights and shows the n-th (0-based) case-insensitive match of the chapter text (matches
+   * may cross tags). ctx: the text just before the match as the app saw it (whitespace removed);
+   * if the n-th match does not follow it, the match that does is shown instead.
+   */
+  R.find = function (q, n, ctx) {
+    clearHit();
+    var t = texts(), lq = q.toLowerCase();
+    if (!lq) return 0;
+    if (t.text === null) {
+      var parts = [];
+      for (var k = 0; k < t.nodes.length; k++) parts.push(t.nodes[k].data);
+      t.text = parts.join('');
+    }
+    var lower = t.text.toLowerCase(), hits = [], i = lower.indexOf(lq);
+    while (i >= 0 && hits.length < 10000) {
+      hits.push(i);
+      i = lower.indexOf(lq, i + Math.max(1, lq.length));
+    }
+    var follows = function (p) {
+      var pre = squash(lower.slice(Math.max(0, p - 200), p));
+      if (pre.length >= ctx.length) return pre.slice(pre.length - ctx.length) === ctx;
+      return p < 200 && ctx.slice(ctx.length - pre.length) === pre; // match near the chapter start
+    };
+    var pick = -1;
+    if (ctx) {
+      if (n < hits.length && follows(hits[n])) pick = n;
+      else for (var h = 0; h < hits.length && pick < 0; h++) if (follows(hits[h])) pick = h;
+    }
+    if (pick < 0) {
+      if (n >= hits.length) return 0;
+      pick = n;
+    }
+    var rc = highlight(hits[pick], lq.length);
+    if (rc) showRect(rc);
+    anchorPos = -1;
+    return 1;
   };
 
   R.next = function () {
@@ -335,7 +403,7 @@
       else if (t.t === 'text') R.goText(t.v);
       else if (t.t === 'anchor') R.goAnchor(t.v);
       else if (t.t === 'frac') go(Math.min(count - 1, Math.floor(t.v * count)));
-      else if (t.t === 'find') { if (!R.find(t.v, t.n)) R.find(t.v, 0); }
+      else if (t.t === 'find') { if (!R.find(t.v, t.n, t.c)) R.find(t.v, 0); }
       else go(t.v | 0);
       ready = true;
       ready2();

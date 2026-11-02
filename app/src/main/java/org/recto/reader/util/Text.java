@@ -62,13 +62,15 @@ public final class Text {
         }
     }
 
-    public static boolean isUtf8(byte[] b, int off, int len) {
+    public static boolean isUtf8(byte[] b, int off, int len) { return strictUtf8(b, off, len) != null; }
+
+    /** Decodes strictly as UTF-8; null if the bytes are not valid UTF-8. */
+    public static String strictUtf8(byte[] b, int off, int len) {
         try {
-            StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
-                    .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(b, off, len));
-            return true;
+            return StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(b, off, len)).toString();
         } catch (CharacterCodingException e) {
-            return false;
+            return null;
         }
     }
 
@@ -86,7 +88,9 @@ public final class Text {
         int check = n;
         for (int k = 0; k < 3 && check > 0 && (b[check - 1] & 0xc0) == 0x80; k++) check--;
         if (check > 0 && (b[check - 1] & 0xc0) == 0xc0) check--;
-        if (isUtf8(b, 0, check)) return new String(b, StandardCharsets.UTF_8);
+        // Validate and decode in one pass (the text is not decoded twice).
+        String utf8 = strictUtf8(b, 0, check);
+        if (utf8 != null) return check == n ? utf8 : new String(b, StandardCharsets.UTF_8);
         return new String(b, guessLegacy(b));
     }
 
