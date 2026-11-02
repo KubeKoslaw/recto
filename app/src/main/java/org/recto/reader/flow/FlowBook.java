@@ -9,6 +9,7 @@ import java.io.InputStream;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
@@ -65,11 +66,34 @@ public abstract class FlowBook implements Closeable {
     /** Encoded cover image, or null. */
     public byte[] cover() throws IOException { return null; }
 
+    private HashMap<String, Integer> pathIndex, foldedIndex;
+    private int indexedChapters = -1;
+
+    /** Chapter by exact path, else case-insensitive match, else -1. Hash lookup (called per request). */
     public int chapterIndex(String path) {
-        for (int i = 0; i < chapters.size(); i++) if (chapters.get(i).path.equals(path)) return i;
-        for (int i = 0; i < chapters.size(); i++) if (chapters.get(i).path.equalsIgnoreCase(path)) return i;
-        return -1;
+        if (path == null) return -1;
+        HashMap<String, Integer> exact, folded;
+        synchronized (this) {
+            int n = chapters.size();
+            if (indexedChapters != n) { // chapters are only appended while a book is being built
+                pathIndex = new HashMap<>(n * 2);
+                foldedIndex = new HashMap<>(n * 2);
+                for (int i = n - 1; i >= 0; i--) { // first occurrence wins
+                    String p = chapters.get(i).path;
+                    pathIndex.put(p, i);
+                    foldedIndex.put(fold(p), i);
+                }
+                indexedChapters = n;
+            }
+            exact = pathIndex;
+            folded = foldedIndex;
+        }
+        Integer i = exact.get(path);
+        if (i == null) i = folded.get(fold(path));
+        return i == null ? -1 : i;
     }
+
+    private static String fold(String s) { return s.toLowerCase(Locale.ROOT).toUpperCase(Locale.ROOT); }
 
     /** Visible text of a chapter (used for search). */
     public String chapterText(int i) throws IOException { return htmlToText(chapterHtml(i)); }

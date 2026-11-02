@@ -37,6 +37,14 @@ final class Library {
             return o;
         }
 
+        Book copy() {
+            Book b = new Book();
+            b.id = id; b.uri = uri; b.title = title; b.author = author; b.format = format; b.pos = pos;
+            b.size = size; b.added = added; b.opened = opened; b.progress = progress; b.pages = pages;
+            b.mode = mode; b.dir = dir; b.fit = fit; b.invert = invert; b.folder = folder;
+            return b;
+        }
+
         static Book of(JSONObject o) {
             Book b = new Book();
             b.id = o.optString("id");
@@ -86,6 +94,13 @@ final class Library {
 
     synchronized Book find(String id) { return books.get(id); }
 
+    /** Entry with this document URI, or null. */
+    synchronized Book findByUri(String uri) {
+        if (uri == null) return null;
+        for (Book b : books.values()) if (uri.equals(b.uri)) return b;
+        return null;
+    }
+
     synchronized List<Book> all() {
         List<Book> l = new ArrayList<>(books.values());
         Collections.sort(l, (a, b) -> {
@@ -111,25 +126,42 @@ final class Library {
         save();
     }
 
-    /** Writes asynchronously and atomically (temp file + rename). */
+    private boolean saveQueued;
+
+    /**
+     * Writes asynchronously and atomically (temp file + rename). The JSON is built on the I/O
+     * thread from a snapshot, and saves requested while one is queued are merged into it, so the
+     * caller (usually the UI thread) never pays for serializing a large library.
+     */
     synchronized void save() {
+        if (saveQueued) return;
+        saveQueued = true;
+        io.execute(this::write);
+    }
+
+    private void write() {
+        List<Book> snapshot;
+        synchronized (this) {
+            saveQueued = false;
+            snapshot = new ArrayList<>(books.size());
+            for (Book b : books.values()) snapshot.add(b.copy());
+        }
         final String data;
         try {
             JSONArray a = new JSONArray();
-            for (Book b : books.values()) a.put(b.json());
+            for (Book b : snapshot) a.put(b.json());
             data = a.toString();
         } catch (Exception e) {
             return;
         }
-        io.execute(() -> {
-            File tmp = new File(file.getPath() + ".tmp");
-            try (FileOutputStream out = new FileOutputStream(tmp)) {
-                out.write(data.getBytes(StandardCharsets.UTF_8));
-                out.getFD().sync();
-            } catch (Exception e) {
-                return;
-            }
-            if (!tmp.renameTo(file)) tmp.delete();
-        });
+        File tmp = new File(file.getPath() + ".tmp");
+        try (FileOutputStream out = new FileOutputStream(tmp)) {
+            out.write(data.getBytes(StandardCharsets.UTF_8));
+            out.getFD().sync();
+        } catch (Exception e) {
+            tmp.delete();
+            return;
+        }
+        if (!tmp.renameTo(file)) tmp.delete();
     }
 }
