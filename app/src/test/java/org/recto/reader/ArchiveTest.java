@@ -148,4 +148,44 @@ public class ArchiveTest {
             r.close();
         }
     }
+
+    @Test public void findIsIndexedAndCaseInsensitive() throws Exception {
+        ZipArchive z = new ZipArchive(new BytesSeekable(zip("A/Page.jpg", "1", "a/page.JPG", "2", "b.txt", "3")));
+        assertEquals("A/Page.jpg", z.find("A/Page.jpg").name);
+        assertEquals("a/page.JPG", z.find("a/page.JPG").name);
+        assertEquals("A/Page.jpg", z.find("a/PAGE.jpg").name); // first case-insensitive match wins
+        assertEquals(null, z.find("missing"));
+        assertEquals(null, z.find(null));
+        assertArrayEquals("3".getBytes(StandardCharsets.UTF_8), z.read(z.find("B.TXT")));
+    }
+
+    @Test public void readKnownSizeExactly() throws Exception {
+        byte[] big = new byte[300_000];
+        new Random(3).nextBytes(big);
+        ZipArchive z = new ZipArchive(new BytesSeekable(zip("x.bin", "x", "big.bin", big)));
+        assertArrayEquals(big, z.read(z.find("big.bin")));
+    }
+
+    @Test(expected = java.io.IOException.class)
+    public void rarShortFileHeaderIsCorrupt() throws Exception {
+        byte[] rar = new byte[64];
+        byte[] sig = {'R', 'a', 'r', '!', 0x1a, 7, 0};
+        System.arraycopy(sig, 0, rar, 0, 7);
+        rar[7 + 2] = 0x74; // file header ...
+        rar[7 + 5] = 10;   // ... claiming only 10 bytes
+        new RarArchive(new BytesSeekable(rar));
+    }
+
+    @Test public void zipTruncatedUnicodeExtraIsIgnored() throws Exception {
+        ByteArrayOutputStream bo = new ByteArrayOutputStream();
+        try (ZipOutputStream z = new ZipOutputStream(bo)) {
+            ZipEntry e = new ZipEntry("a.txt");
+            e.setExtra(new byte[]{0x75, 0x70, 40, 0, 1, 0}); // Unicode path claiming 40 bytes, 2 present
+            z.putNextEntry(e);
+            z.write('x');
+            z.closeEntry();
+        }
+        ZipArchive z = new ZipArchive(new BytesSeekable(bo.toByteArray()));
+        assertEquals("a.txt", z.entries().get(0).name);
+    }
 }

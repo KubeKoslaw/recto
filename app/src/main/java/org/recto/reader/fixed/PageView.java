@@ -82,6 +82,9 @@ public final class PageView extends View {
     private final ArrayList<Tile> patches = new ArrayList<>();
     private final Set<Long> inflight = Collections.synchronizedSet(new HashSet<>());
     private final Set<Long> failed = new HashSet<>();
+    /** Tiles that ran out of memory: retried after this time (uptime ms) instead of failing for good. */
+    private final java.util.HashMap<Long, Long> retryAt = new java.util.HashMap<>();
+    private static final long OOM_RETRY_MS = 1500;
     /** Tiles the current view needs (visible + prefetch); never evicted. */
     private final Set<Long> wanted = new HashSet<>();
     private long wantedBytes;
@@ -248,6 +251,7 @@ public final class PageView extends View {
         cache.clear();
         patches.clear();
         failed.clear();
+        retryAt.clear();
         cacheBytes = 0;
     }
 
@@ -817,6 +821,8 @@ public final class PageView extends View {
             wantedBytes += est;
             Tile have = cache.get(key);
             if ((have != null && Math.abs(have.scale - bs) < bs * 0.002f) || inflight.contains(key) || failed.contains(key)) continue;
+            Long retry = retryAt.get(key);
+            if (retry != null && android.os.SystemClock.uptimeMillis() < retry) continue;
             jobs.add(new Job(Job.BASE, i, 0, bs, r, key));
         }
     }
@@ -880,13 +886,13 @@ public final class PageView extends View {
         }
         if (from >= 0 && !inflight.contains(-1L)) {
             int to = from;
-            while (to < count && to < from + 32 && !known[to]) to++;
+            while (to < count && to < from + 16 && !known[to]) to++;
             jobs.add(new Job(Job.SIZES, from, to, 0, null, -1L));
         }
         worker.post(jobs);
     }
 
-    private void deliver(Job j, Bitmap b, float[] sizes, boolean error) {
+    private void deliver(Job j, Bitmap b, float[] sizes, boolean error, boolean oom) {
         inflight.remove(j.key);
         if (worker == null) {
             if (b != null) b.recycle();
@@ -897,6 +903,14 @@ public final class PageView extends View {
             schedule();
             return;
         }
+        if (oom) {
+            // Out of memory is usually temporary (memory was just trimmed): try again shortly.
+            if (j.type == Job.BASE) {
+                retryAt.put(j.key, android.os.SystemClock.uptimeMillis() + OOM_RETRY_MS);
+                ui.postDelayed(this::schedule, OOM_RETRY_MS + 50);
+            }
+            return;
+        }
         if (error) {
             failed.add(j.key);
             invalidate();
@@ -904,6 +918,7 @@ public final class PageView extends View {
             return;
         }
         if (b == null) return;
+        retryAt.remove(j.key);
         Tile t = new Tile(j.page, j.scale, j.region, b);
         if (j.type == Job.PATCH) {
             for (Iterator<Tile> it = patches.iterator(); it.hasNext(); ) if (it.next().page == j.page) it.remove();
@@ -958,6 +973,11 @@ public final class PageView extends View {
             }
         }
 
+        /** True if newer render jobs are waiting (lets a long size probe yield to them). */
+        boolean hasWaiting() {
+            synchronized (lock) { return !queue.isEmpty(); }
+        }
+
         void quit() {
             quit = true;
             synchronized (lock) { lock.notifyAll(); }
@@ -986,11 +1006,11 @@ public final class PageView extends View {
                 }
                 Bitmap b = null;
                 float[] sizes = null;
-                boolean error = false;
+                boolean error = false, oom = false;
                 try {
                     if (j.type == Job.SIZES) {
-                        sizes = new float[(j.to - j.page) * 2];
-                        for (int i = j.page; i < j.to && !quit; i++) {
+                        sizes = new float[(j.to - j.page) * 2]; // unprobed entries stay 0 and are retried
+                        for (int i = j.page; i < j.to && !quit && (i == j.page || !hasWaiting()); i++) {
                             try {
                                 s.size(i, one);
                                 sizes[(i - j.page) * 2] = one[0];
@@ -1002,23 +1022,23 @@ public final class PageView extends View {
                     } else {
                         b = s.render(j.page, j.scale, j.region, lowMem);
                     }
-                } catch (OutOfMemoryError oom) {
+                } catch (OutOfMemoryError e) {
                     ui.post(PageView.this::trimMemory);
-                    try { Thread.sleep(50); } catch (InterruptedException e) { return; }
-                    error = j.type == Job.BASE;
+                    try { Thread.sleep(50); } catch (InterruptedException ie) { return; }
+                    oom = true;
                 } catch (Throwable t) {
                     error = true;
                 }
                 final Bitmap fb = b;
                 final float[] fs = sizes;
-                final boolean fe = error;
+                final boolean fe = error, fo = oom;
                 final Job fj = j;
                 ui.post(() -> {
                     if (fj.type == Job.SIZES && fs != null) {
                         // Mark failed probes as known so they are not retried forever.
                         for (int k = 0; k * 2 < fs.length; k++) if (fs[k * 2] < 0 && fj.page + k < count) known[fj.page + k] = true;
                     }
-                    deliver(fj, fb, fs, fe);
+                    deliver(fj, fb, fs, fe, fo);
                 });
             }
             try { s.close(); } catch (Exception ignored) {}

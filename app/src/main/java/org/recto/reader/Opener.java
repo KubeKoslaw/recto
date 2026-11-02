@@ -77,13 +77,17 @@ final class Opener {
         return false;
     }
 
-    static Doc open(Context c, Uri uri, String password) throws IOException {
+    static Doc open(Context c, Uri uri, String password) throws IOException { return open(c, uri, password, true); }
+
+    /** @param allowCopy false: fail with {@link Source.NotSeekable} instead of downloading a streamed file */
+    static Doc open(Context c, Uri uri, String password, boolean allowCopy) throws IOException {
         Source.Info info = Source.info(c, uri);
         Doc d = new Doc();
         d.name = info.name;
         d.size = info.size;
         d.title = Text.baseName(info.name);
-        Seekable src = Source.open(c, uri);
+        ParcelFileDescriptor fd = Source.openFd(c, uri, allowCopy);
+        Seekable src = Source.seekable(fd);
         if (d.size < 0) d.size = src.size();
         d.id = Library.idFor(d.name, d.size);
         boolean keep = false;
@@ -92,9 +96,11 @@ final class Opener {
             int n = Math.max(0, src.read(0, head, 0, head.length));
             String ext = Text.ext(info.name);
             if (isPdf(head, n) || (n == 0 && ext.equals("pdf"))) {
+                // Reuse the descriptor (a streamed file is not opened or copied a second time).
+                ParcelFileDescriptor pdf = fd.dup();
                 Text.close(src);
                 src = null;
-                openPdf(c, uri, password, d);
+                openPdf(pdf, password, d);
             } else if (n >= 4 && head[0] == 'P' && head[1] == 'K' && (head[2] == 3 || head[2] == 5)) {
                 keep = openZip(new ZipArchive(src), d);
             } else if (RarArchive.isRar(head, n)) {
@@ -111,7 +117,7 @@ final class Opener {
             } else if (n >= 6 && head[0] == '7' && head[1] == 'z' && (head[2] & 0xff) == 0xbc && (head[3] & 0xff) == 0xaf) {
                 throw new Failure(R.string.err_7z);
             } else if (MobiBook.isMobi(head, n)) {
-                d.book = MobiBook.parse(src, info.name);
+                d.book = MobiBook.parse(src, info.name); // owns src: pictures are read on demand
                 d.format = ext.startsWith("azw") ? "AZW" : "MOBI";
                 keep = true;
             } else if (Text.sniffImage(head, n) != null) {
@@ -151,6 +157,21 @@ final class Opener {
         }
     }
 
+    /**
+     * Encoded cover picture for library thumbnails without converting the whole book, or
+     * {@link #NO_QUICK_COVER} if the format needs a full open.
+     */
+    static byte[] quickCover(Context c, Uri uri) throws IOException {
+        try (Seekable src = Source.seekable(Source.openFd(c, uri, false))) {
+            byte[] head = new byte[128];
+            int n = Math.max(0, src.read(0, head, 0, head.length));
+            if (MobiBook.isMobi(head, n)) return MobiBook.cover(src);
+            return NO_QUICK_COVER;
+        }
+    }
+
+    static final byte[] NO_QUICK_COVER = new byte[0];
+
     private static void finish(Doc d) {
         if (d.book != null) {
             if (d.book.title != null && !d.book.title.trim().isEmpty()) d.title = d.book.title.trim();
@@ -185,8 +206,7 @@ final class Opener {
         return ctrl < n / 50 + 1;
     }
 
-    private static void openPdf(Context c, Uri uri, String password, Doc d) throws IOException {
-        ParcelFileDescriptor fd = Source.openFd(c, uri);
+    private static void openPdf(ParcelFileDescriptor fd, String password, Doc d) throws IOException {
         try {
             d.pages = new PdfSource(fd, password);
         } catch (SecurityException e) {
