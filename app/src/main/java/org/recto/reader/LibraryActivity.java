@@ -185,6 +185,12 @@ public final class LibraryActivity extends Activity {
 
     private static final int[] BADGE = {0xff2f6f5e, 0xff8a4b2a, 0xff3d5a99, 0xff7b3f7a, 0xff5b6b2f, 0xff9a3b3b};
 
+    private static final class Holder {
+        TextView title, sub, pct, badge;
+        ProgressBar bar;
+        ImageView cover;
+    }
+
     private final class Adapter extends BaseAdapter {
         @Override public int getCount() { return shown.size(); }
 
@@ -193,9 +199,22 @@ public final class LibraryActivity extends Activity {
         @Override public long getItemId(int i) { return i; }
 
         @Override public View getView(int pos, View v, ViewGroup parent) {
-            if (v == null) v = LayoutInflater.from(LibraryActivity.this).inflate(R.layout.item_book, parent, false);
+            Holder h;
+            if (v == null) {
+                v = LayoutInflater.from(LibraryActivity.this).inflate(R.layout.item_book, parent, false);
+                h = new Holder();
+                h.title = v.findViewById(R.id.title);
+                h.sub = v.findViewById(R.id.sub);
+                h.pct = v.findViewById(R.id.pct);
+                h.badge = v.findViewById(R.id.badge);
+                h.bar = v.findViewById(R.id.bar);
+                h.cover = v.findViewById(R.id.cover);
+                v.setTag(h);
+            } else {
+                h = (Holder) v.getTag();
+            }
             Library.Book b = shown.get(pos);
-            ((TextView) v.findViewById(R.id.title)).setText(b.title != null ? b.title : "?");
+            h.title.setText(b.title != null ? b.title : "?");
             String sub = b.format != null ? b.format : "";
             if (b.author != null && !b.author.isEmpty()) sub = b.author + "  ·  " + sub;
             if (b.opened > 0) {
@@ -203,22 +222,27 @@ public final class LibraryActivity extends Activity {
                 sub += "  \u00b7  " + (now - b.opened < DateUtils.MINUTE_IN_MILLIS ? getString(R.string.just_now)
                         : DateUtils.getRelativeTimeSpanString(b.opened, now, DateUtils.MINUTE_IN_MILLIS));
             }
-            ((TextView) v.findViewById(R.id.sub)).setText(sub);
-            ProgressBar bar = v.findViewById(R.id.bar);
-            bar.setProgress(Math.round(b.progress * 1000));
-            bar.setVisibility(b.opened > 0 ? View.VISIBLE : View.INVISIBLE);
-            ((TextView) v.findViewById(R.id.pct)).setText(b.opened > 0 ? Math.round(b.progress * 100) + "%" : getString(R.string.status_new));
-            ImageView cover = v.findViewById(R.id.cover);
-            TextView badge = v.findViewById(R.id.badge);
-            Bitmap bmp = Covers.cached(LibraryActivity.this, b.id);
-            cover.setImageBitmap(bmp);
-            badge.setText(b.format);
+            h.sub.setText(sub);
+            h.bar.setProgress(Math.round(b.progress * 1000));
+            h.bar.setVisibility(b.opened > 0 ? View.VISIBLE : View.INVISIBLE);
+            h.pct.setText(b.opened > 0 ? Math.round(b.progress * 100) + "%" : getString(R.string.status_new));
+            h.badge.setText(b.format);
             GradientDrawable g = new GradientDrawable();
             g.setCornerRadius(dp(3));
             g.setColor(BADGE[Math.abs(b.id.hashCode()) % BADGE.length]);
-            badge.setBackground(g);
-            if (bmp == null && b.uri != null && !Covers.known(LibraryActivity.this, b.id))
-                Covers.request(LibraryActivity.this, b, id -> runOnUiThread(this::notifyDataSetChanged));
+            h.badge.setBackground(g);
+            // Thumbnails are decoded / generated off the UI thread; the row may be recycled meanwhile.
+            final ImageView cover = h.cover;
+            cover.setTag(b.id);
+            Bitmap bmp = Covers.cached(b.id);
+            cover.setImageBitmap(bmp);
+            if (bmp == null) {
+                Covers.load(LibraryActivity.this, b, (id, loaded) -> {
+                    if (loaded != null) runOnUiThread(() -> {
+                        if (id.equals(cover.getTag())) cover.setImageBitmap(loaded);
+                    });
+                });
+            }
             return v;
         }
     }
@@ -307,25 +331,41 @@ public final class LibraryActivity extends Activity {
         Toast.makeText(this, R.string.scanning, Toast.LENGTH_SHORT).show();
         bg.execute(() -> {
             List<Library.Book> found = new ArrayList<>();
+            // Roots that could not be listed completely (revoked access, unmounted card, provider
+            // error): their books are kept rather than treated as deleted.
+            List<String> incomplete = new ArrayList<>();
             for (String f : roots) {
                 Uri tree = Uri.parse(f);
+                boolean complete;
                 try {
-                    walk(tree, DocumentsContract.getTreeDocumentId(tree), 0, found);
-                } catch (Exception ignored) {}
+                    complete = walk(tree, DocumentsContract.getTreeDocumentId(tree), 0, found);
+                } catch (Exception e) {
+                    complete = false;
+                }
+                if (!complete) incomplete.add(f);
             }
             Set<String> ids = new HashSet<>();
             List<Library.Book> updates = new ArrayList<>();
             for (Library.Book b : found) {
                 if (!ids.add(b.id)) continue;
                 Library.Book old = library.find(b.id);
-                if (old == null) updates.add(b);
-                else if (old.uri == null || !old.uri.equals(b.uri)) {
-                    old.uri = b.uri;
-                    updates.add(old);
+                if (old == null) {
+                    // Same document already known under another id (e.g. its size was not reported).
+                    Library.Book same = library.findByUri(b.uri);
+                    if (same != null) ids.add(same.id); else updates.add(b);
+                } else if (old.uri == null || !old.uri.equals(b.uri)) {
+                    Library.Book moved = old.copy(); // never mutate shared entries off the UI thread
+                    moved.uri = b.uri;
+                    updates.add(moved);
                 }
             }
             List<String> removes = new ArrayList<>();
-            for (Library.Book b : library.all()) if (b.folder && b.opened == 0 && !ids.contains(b.id)) removes.add(b.id);
+            for (Library.Book b : library.all()) {
+                if (!b.folder || b.opened != 0 || ids.contains(b.id)) continue;
+                boolean keep = false;
+                for (String f : incomplete) if (b.uri != null && b.uri.startsWith(f)) keep = true;
+                if (!keep) removes.add(b.id);
+            }
             library.putAll(updates, removes);
             runOnUiThread(() -> {
                 if (!isDestroyed()) reload();
@@ -333,13 +373,14 @@ public final class LibraryActivity extends Activity {
         });
     }
 
-    private void walk(Uri tree, String docId, int depth, List<Library.Book> out) {
+    /** Lists a folder tree; returns false if some folder could not be read. */
+    private boolean walk(Uri tree, String docId, int depth, List<Library.Book> out) {
         Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId);
         String[] cols = {DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
                 DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_SIZE};
         List<String> dirs = new ArrayList<>();
         try (Cursor c = getContentResolver().query(children, cols, null, null, null)) {
-            if (c == null) return;
+            if (c == null) return false;
             long now = System.currentTimeMillis();
             while (c.moveToNext()) {
                 String id = c.getString(0), name = c.getString(1), mime = c.getString(2);
@@ -360,8 +401,12 @@ public final class LibraryActivity extends Activity {
                     out.add(b);
                 }
             }
-        } catch (Exception ignored) {}
-        if (depth < 10) for (String d : dirs) walk(tree, d, depth + 1, out);
+        } catch (Exception e) {
+            return false;
+        }
+        boolean complete = true;
+        if (depth < 10) for (String d : dirs) complete &= walk(tree, d, depth + 1, out);
+        return complete;
     }
 
     private void manageFolders() {
