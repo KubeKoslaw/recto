@@ -20,6 +20,7 @@ import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 
 import org.json.JSONObject;
+import org.recto.reader.screen.Spread;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -35,7 +36,8 @@ import java.util.regex.Pattern;
 
 /**
  * Reflowable book viewer: one WebView showing one chapter at a time, paginated with CSS columns
- * (or scrolled). Content is served from the book through request interception only - no network,
+ * (or scrolled). On large book-shaped windows (unfolded foldables, tablets) a screen shows two
+ * columns side by side like an open book (see {@link Spread}). Content is served from the book through request interception only - no network,
  * no file access, book scripts disabled by a Content-Security-Policy.
  */
 @SuppressLint("ViewConstructor")
@@ -82,6 +84,7 @@ public final class FlowView extends FrameLayout {
     private Style style = new Style();
     private int chapter = -1, page, pages = 1, textPos = -1;
     private boolean loading, selecting, tapZones = true;
+    private int spreadMode = Spread.OFF;
     private String target;
     private final List<int[]> back = new ArrayList<>(); // chapter, text position
     private long[] cumulative;
@@ -155,6 +158,18 @@ public final class FlowView extends FrameLayout {
 
     /** Side taps turn pages (true) or every tap opens the menu (false). */
     public void setTapZones(boolean on) { tapZones = on; }
+
+    /** Two pages per screen: {@link Spread#AUTO}, {@link Spread#OFF} or {@link Spread#ON}. */
+    public void setSpreadMode(int mode) {
+        if (spreadMode == mode) return;
+        boolean was = isSpread();
+        spreadMode = mode;
+        if (isSpread() != was && !loading && chapter >= 0)
+            web.evaluateJavascript("__R.apply(null," + layoutOpts(style) + ")", null);
+    }
+
+    /** True while the current window shows two pages per screen. */
+    public boolean isSpread() { return !style.scroll && Spread.twoPages(spreadMode, getWidth(), getHeight(), density); }
 
     public FlowBook book() { return book; }
 
@@ -305,16 +320,17 @@ public final class FlowView extends FrameLayout {
         return "{\"m\":[" + t + "," + r + "," + b + "," + l + "],\"scroll\":" + s.scroll + sizeOpts() + "}";
     }
 
-    /** Exact viewport size in CSS px (the WebView fills this view). */
+    /** Exact viewport size in CSS px (the WebView fills this view) and the two-page flag. */
     private String sizeOpts() {
         if (getWidth() == 0 || getHeight() == 0) return "";
-        return String.format(Locale.ROOT, ",\"w\":%.4f,\"h\":%.4f", getWidth() / density, getHeight() / density);
+        return String.format(Locale.ROOT, ",\"w\":%.4f,\"h\":%.4f,\"spread\":%b", getWidth() / density, getHeight() / density, isSpread());
     }
 
+    /** Rotation, split screen, folding / unfolding: re-layout, switching between one and two pages. */
     @Override protected void onSizeChanged(int w, int h, int ow, int oh) {
         super.onSizeChanged(w, h, ow, oh);
         if (ow != 0 && oh != 0 && !loading && chapter >= 0)
-            web.evaluateJavascript(String.format(Locale.ROOT, "__R.resize(%.4f,%.4f)", w / density, h / density), null);
+            web.evaluateJavascript(String.format(Locale.ROOT, "__R.resize(%.4f,%.4f,%b)", w / density, h / density, isSpread()), null);
     }
 
     static String hex(int c) { return String.format(Locale.ROOT, "#%06x", c & 0xffffff); }

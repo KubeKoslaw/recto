@@ -23,6 +23,8 @@ import android.view.View;
 import android.view.animation.DecelerateInterpolator;
 import android.widget.OverScroller;
 
+import org.recto.reader.screen.Spread;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -33,6 +35,9 @@ import java.util.Set;
 
 /**
  * Fixed-layout page viewer: paged (LTR / RTL) or continuous vertical scrolling, pinch zoom.
+ * On large book-shaped windows (unfolded foldables, tablets) paged mode can show two pages side
+ * by side like an open book (see {@link Spread}): the first page stays alone like a book cover,
+ * landscape pages stay alone, and the pair meets at the centre of the screen (the fold).
  * Pages are rendered on one background thread at exactly the on-screen resolution; tall pages are
  * split into bands and, when zoomed in, the visible part is re-rendered sharp ("patch").
  */
@@ -65,6 +70,10 @@ public final class PageView extends View {
     private float[] pw = new float[0], ph = new float[0];
     private boolean[] known = new boolean[0];
     private float[] utop = new float[1];
+    /** Two-page mode: the other page of the same spread (-1 if alone) and the spread's first page. */
+    private int[] mate = new int[0], lead = new int[0];
+    private int spreadMode = Spread.OFF;
+    private boolean spread;
 
     private boolean continuous, rtl, fitWidth, animate = true, tapZones = true, lowMem;
     private int bg = Color.BLACK;
@@ -155,6 +164,7 @@ public final class PageView extends View {
         cur = clampPage(page);
         if (count > 0) known[cur] = true;
         gapUnits = s.isImages() ? 0 : 0.012f;
+        computeSpreads();
         worker = new Worker();
         worker.start();
         pendingOffset = offset;
@@ -197,6 +207,19 @@ public final class PageView extends View {
         }
         relayout(page, off);
     }
+
+    /** Two pages side by side in paged mode: {@link Spread#AUTO}, {@link Spread#OFF} or {@link Spread#ON}. */
+    public void setSpreadMode(int mode) {
+        if (spreadMode == mode) return;
+        spreadMode = mode;
+        updateSpread();
+    }
+
+    /** True while two pages are shown side by side. */
+    public boolean isSpread() { return spread && !continuous; }
+
+    /** The page shown next to the current one in two-page mode, or -1. */
+    public int getMate() { return isSpread() ? mateOf(cur) : -1; }
 
     public int getPage() { return cur; }
 
@@ -259,10 +282,70 @@ public final class PageView extends View {
 
     private int clampPage(int p) { return Math.max(0, Math.min(count - 1, p)); }
 
+    // ---- two-page spreads ---------------------------------------------------------------------
+
+    private void updateSpread() {
+        boolean on = Spread.twoPages(spreadMode, vw, vh, density);
+        if (on == spread) return;
+        spread = on;
+        if (continuous) return; // two pages only apply to paged mode
+        zoom = 1;
+        sx = sy = 0;
+        patches.clear();
+        relayout(cur, 0);
+        if (listener != null && count > 0) listener.onPageChanged(cur);
+    }
+
+    /** Pairs pages: the first one alone (book cover), then two by two; landscape pages stay alone. */
+    private void computeSpreads() {
+        if (mate.length != count) {
+            mate = new int[count];
+            lead = new int[count];
+        }
+        boolean two = spread && !continuous;
+        for (int i = 0; i < count; ) {
+            boolean pair = two && i > 0 && i + 1 < count && !Spread.isWide(pw[i], ph[i]) && !Spread.isWide(pw[i + 1], ph[i + 1]);
+            lead[i] = i;
+            mate[i] = pair ? i + 1 : -1;
+            if (pair) {
+                lead[i + 1] = i;
+                mate[i + 1] = i;
+                i += 2;
+            } else i++;
+        }
+    }
+
+    private int mateOf(int i) { return i >= 0 && i < mate.length ? mate[i] : -1; }
+
+    private int leadOf(int i) { return i >= 0 && i < lead.length ? lead[i] : i; }
+
+    /** First page of the next / previous spread (just the next / previous page in single mode), or -1. */
+    private int nextUnit(int p) {
+        int n = p + (mateOf(p) > p ? 2 : 1);
+        return n < count ? n : -1;
+    }
+
+    private int prevUnit(int p) { return p > 0 ? leadOf(p - 1) : -1; }
+
+    /** Size at zoom 1 of the spread led by page p; two pages fill equal halves meeting at the centre. */
+    private float boxW(int p) {
+        float w = pw[p] * baseScale(p);
+        int m = mateOf(p);
+        return m < 0 ? w : 2 * Math.max(w, pw[m] * baseScale(m));
+    }
+
+    private float boxH(int p) {
+        float h = ph[p] * baseScale(p);
+        int m = mateOf(p);
+        return m < 0 ? h : Math.max(h, ph[m] * baseScale(m));
+    }
+
     /** Scale (px per source unit) of page i at zoom 1. */
     private float baseScale(int i) {
-        if (continuous || fitWidth) return vw / pw[i];
-        return Math.min(vw / pw[i], vh / ph[i]);
+        if (continuous) return vw / pw[i];
+        float w = mateOf(i) >= 0 ? vw / 2f : vw;
+        if (fitWidth) return w / pw[i];
+        return Math.min(w / pw[i], vh / ph[i]);
     }
 
     private float top(int i) { return utop[i] * vw * zoom; }
@@ -291,11 +374,22 @@ public final class PageView extends View {
         return lo;
     }
 
-    /** On-screen rectangle of a page in paged mode with the given pan state. */
-    private void pagedRect(int i, float z, float px, float py, float shift, RectF out) {
-        float s = baseScale(i) * z, w = pw[i] * s, h = ph[i] * s;
+    /** On-screen rectangle of the spread led by page p (or of page p alone) in paged mode. */
+    private void boxRect(int p, float z, float px, float py, float shift, RectF out) {
+        float w = boxW(p) * z, h = boxH(p) * z;
         float l = w <= vw ? (vw - w) / 2 : -px, t = h <= vh ? (vh - h) / 2 : -py;
         out.set(l + shift, t, l + shift + w, t + h);
+    }
+
+    /** On-screen rectangle of a page in paged mode with the given pan state. */
+    private void pagedRect(int i, float z, float px, float py, float shift, RectF out) {
+        int p = leadOf(i);
+        boxRect(p, z, px, py, shift, out);
+        if (mateOf(p) < 0) return;
+        float s = baseScale(i) * z, w = pw[i] * s, h = ph[i] * s;
+        boolean left = (i == p) != rtl; // reading order: the first page is on the left (on the right in RTL)
+        float l = left ? out.centerX() - w : out.centerX(), t = out.top + (out.height() - h) / 2;
+        out.set(l, t, l + w, t + h);
     }
 
     private void contRect(int i, RectF out) {
@@ -305,14 +399,14 @@ public final class PageView extends View {
 
     private float maxSx() {
         if (count == 0) return 0;
-        float w = continuous ? vw * zoom : pw[cur] * baseScale(cur) * zoom;
+        float w = continuous ? vw * zoom : boxW(cur) * zoom;
         return Math.max(0, w - vw);
     }
 
     private float maxSy() {
         if (count == 0) return 0;
         if (continuous) return Math.max(0, docH() - vh);
-        return Math.max(0, ph[cur] * baseScale(cur) * zoom - vh);
+        return Math.max(0, boxH(cur) * zoom - vh);
     }
 
     private void clampScroll() {
@@ -322,17 +416,22 @@ public final class PageView extends View {
 
     private boolean isVisible(int page) {
         if (count == 0 || vw == 0) return false;
-        if (!continuous) return page == cur || (dragX != 0 && Math.abs(page - cur) == 1);
+        if (!continuous) {
+            int p = leadOf(page);
+            return p == cur || (dragX != 0 && (p == nextUnit(cur) || p == prevUnit(cur)));
+        }
         return page >= pageAtY(sy) && page <= pageAtY(sy + vh);
     }
 
     private void relayout(int page, float offset) {
         if (count == 0 || vw == 0) {
+            computeSpreads();
             invalidate();
             return;
         }
         computeTops();
-        cur = clampPage(page);
+        computeSpreads();
+        cur = continuous ? clampPage(page) : leadOf(clampPage(page));
         if (continuous) sy = top(cur) + pageH(cur) * offset;
         clampScroll();
         invalidate();
@@ -344,8 +443,16 @@ public final class PageView extends View {
         float off = vw == 0 ? pendingOffset : pageOffset();
         vw = w;
         vh = h;
+        boolean two = Spread.twoPages(spreadMode, w, h, density);
+        if (two != spread && !continuous) { // folded / unfolded: start the new layout unzoomed
+            zoom = 1;
+            sx = sy = 0;
+        }
+        boolean toggled = two != spread;
+        spread = two;
         patches.clear();
         relayout(page, off);
+        if (toggled && listener != null && count > 0) listener.onPageChanged(cur);
     }
 
     private void updateCurrent() {
@@ -360,7 +467,7 @@ public final class PageView extends View {
     // ---- navigation -----------------------------------------------------------------------
 
     private void setPage(int page, boolean atEnd) {
-        page = clampPage(page);
+        page = leadOf(clampPage(page));
         boolean changed = page != cur;
         cur = page;
         zoom = 1;
@@ -397,8 +504,8 @@ public final class PageView extends View {
             animateScroll(Math.max(0, sy - vh * 0.9f));
             return;
         }
-        int target = cur + dir;
-        if (target < 0 || target >= count) return;
+        int target = dir > 0 ? nextUnit(cur) : prevUnit(cur);
+        if (target < 0) return;
         // In RTL the next page comes from the left, i.e. content slides right.
         float to = (dir > 0) != rtl ? -vw : vw;
         if (!animate) {
@@ -504,7 +611,7 @@ public final class PageView extends View {
             zoom = nz;
             computeTops();
         } else {
-            pagedRect(cur, zoom, sx, sy, 0, tmp);
+            boxRect(cur, zoom, sx, sy, 0, tmp);
             float l = fx - (fx - tmp.left) * f, t = fy - (fy - tmp.top) * f;
             zoom = nz;
             sx = -l;
@@ -568,8 +675,7 @@ public final class PageView extends View {
             int dir = 0; // +1: reveal the page on the right, -1: on the left
             if (up && (dragX < -th || (flingVx < -600 * density && dragX < 0))) dir = 1;
             else if (up && (dragX > th || (flingVx > 600 * density && dragX > 0))) dir = -1;
-            int target = dir == 0 ? -1 : (dir > 0) != rtl ? cur + 1 : cur - 1;
-            if (target < 0 || target >= count) target = -1;
+            int target = dir == 0 ? -1 : (dir > 0) != rtl ? nextUnit(cur) : prevUnit(cur);
             boolean back = target >= 0 && target < cur;
             if (!animate) {
                 dragX = 0;
@@ -616,8 +722,9 @@ public final class PageView extends View {
             }
             if (pageDrag) {
                 float nd = dragX - dx;
-                boolean edge = (nd < 0 && ((!rtl && cur >= count - 1) || (rtl && cur <= 0)))
-                        || (nd > 0 && ((!rtl && cur <= 0) || (rtl && cur >= count - 1)));
+                boolean last = nextUnit(cur) < 0, first = prevUnit(cur) < 0;
+                boolean edge = (nd < 0 && ((!rtl && last) || (rtl && first)))
+                        || (nd > 0 && ((!rtl && first) || (rtl && last)));
                 dragX = edge ? dragX - dx * 0.3f : nd;
                 if (animate) invalidate();
                 return true;
@@ -692,6 +799,11 @@ public final class PageView extends View {
         } else {
             page = cur;
             pagedRect(cur, zoom, sx, sy, 0, tmp);
+            int m = mateOf(cur);
+            if (!tmp.contains(x, y) && m >= 0) {
+                page = m;
+                pagedRect(m, zoom, sx, sy, 0, tmp);
+            }
         }
         if (!tmp.contains(x, y)) return false;
         float s = tmp.width() / pw[page];
@@ -733,20 +845,27 @@ public final class PageView extends View {
                 drawPage(c, i, tmp);
             }
         } else {
-            pagedRect(cur, zoom, sx, sy, dragX, tmp);
-            drawPage(c, cur, tmp);
+            drawUnit(c, cur, zoom, sx, sy, dragX);
             if (dragX != 0) {
                 boolean right = dragX < 0;
-                int n = right != rtl ? cur + 1 : cur - 1;
-                if (n >= 0 && n < count) {
+                int n = right != rtl ? nextUnit(cur) : prevUnit(cur);
+                if (n >= 0) {
                     boolean back = n < cur;
                     float ny = back && fitWidth ? Float.MAX_VALUE : 0;
-                    float h = ph[n] * baseScale(n);
-                    pagedRect(n, 1, 0, Math.min(ny, Math.max(0, h - vh)), dragX + (right ? vw : -vw), tmp);
-                    drawPage(c, n, tmp);
+                    drawUnit(c, n, 1, 0, Math.min(ny, Math.max(0, boxH(n) - vh)), dragX + (right ? vw : -vw));
                 }
             }
         }
+    }
+
+    /** Draws the page p (paged mode) and, in two-page mode, the other page of its spread. */
+    private void drawUnit(Canvas c, int p, float z, float px, float py, float shift) {
+        pagedRect(p, z, px, py, shift, tmp);
+        drawPage(c, p, tmp);
+        int m = mateOf(p);
+        if (m < 0) return;
+        pagedRect(m, z, px, py, shift, tmp);
+        drawPage(c, m, tmp);
     }
 
     private void drawPage(Canvas c, int i, RectF r) {
@@ -865,16 +984,28 @@ public final class PageView extends View {
                 addBase(jobs, first - 1, -vh, vh * 2f, tmp.top, tmp.width() / pw[first - 1], false);
             }
         } else {
-            pagedRect(cur, zoom, sx, sy, 0, tmp);
-            addBase(jobs, cur, 0, vh, tmp.top, tmp.width() / pw[cur], true);
-            addBase(jobs, cur, -vh * 0.5f, vh * 1.5f, tmp.top, tmp.width() / pw[cur], false);
-            addPatch(jobs, cur, tmp);
-            for (int d : new int[]{1, -1, 2}) {
-                int n = cur + d;
-                if (n < 0 || n >= count) continue;
-                float h = ph[n] * baseScale(n);
-                float t = d < 0 && fitWidth ? Math.min(0, vh - h) : Math.max(0, (vh - h) / 2);
-                addBase(jobs, n, 0, vh, t, baseScale(n), false);
+            int m = mateOf(cur);
+            int[] shown = m < 0 ? new int[]{cur} : new int[]{cur, m};
+            for (int i : shown) {
+                pagedRect(i, zoom, sx, sy, 0, tmp);
+                addBase(jobs, i, 0, vh, tmp.top, tmp.width() / pw[i], true);
+            }
+            for (int i : shown) {
+                pagedRect(i, zoom, sx, sy, 0, tmp);
+                addBase(jobs, i, -vh * 0.5f, vh * 1.5f, tmp.top, tmp.width() / pw[i], false);
+                addPatch(jobs, i, tmp);
+            }
+            int next = nextUnit(cur), prev = prevUnit(cur);
+            int[] around = {next, prev, next >= 0 ? nextUnit(next) : -1};
+            for (int k = 0; k < around.length; k++) {
+                int n = around[k];
+                if (n < 0) continue;
+                int nm = mateOf(n);
+                for (int i : nm < 0 ? new int[]{n} : new int[]{n, nm}) {
+                    float h = ph[i] * baseScale(i);
+                    float t = k == 1 && fitWidth ? Math.min(0, vh - h) : Math.max(0, (vh - h) / 2);
+                    addBase(jobs, i, 0, vh, t, baseScale(i), false);
+                }
             }
         }
         // Low priority: learn real page sizes around the current page.
