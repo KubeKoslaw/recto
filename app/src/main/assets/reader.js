@@ -3,7 +3,7 @@
   if (window.__R) return;
   var R = window.__R = {};
   var de = document.documentElement;
-  var W = 1, H = 1, scroll = false, page = 0, count = 1, step = 1, ready = false;
+  var W = 1, H = 1, scroll = false, spread = false, page = 0, count = 1, step = 1, ready = false;
   var m = [0, 0, 0, 0]; // top right bottom left (CSS px)
   var marked = -1, hit = null, scrollTimer = 0;
   /* Sticky reading anchor (character offset): kept across relayouts, reset by real navigation. */
@@ -11,8 +11,14 @@
 
   function body() { return document.body || de; }
 
+  /*
+   * Paged mode: the body is a clipped multi-column box scrolled one screen (W) at a time. Two-page
+   * mode (unfolded foldables, tablets) puts two columns on a screen; the gap between them is the
+   * right + left margin, so the screen stride stays W and the gutter sits at the centre (the fold).
+   */
   function layoutCss() {
     var cw = Math.max(40, W - m[1] - m[3]), ch = Math.max(40, H - m[0] - m[2]);
+    var gap = m[1] + m[3], colW = spread ? Math.max(20, (cw - gap) / 2) : cw;
     if (scroll) {
       return 'html{overflow-x:hidden!important;overflow-y:auto!important;width:auto!important;height:auto!important;margin:0!important;padding:0!important}' +
         'body{margin:0!important;padding:' + m[0] + 'px ' + m[1] + 'px ' + m[2] + 'px ' + m[3] + 'px!important;box-sizing:border-box!important;' +
@@ -24,11 +30,14 @@
       'body{margin:' + m[0] + 'px ' + m[1] + 'px ' + m[2] + 'px ' + m[3] + 'px!important;padding:0!important;border:0!important;' +
       'width:' + cw + 'px!important;height:' + ch + 'px!important;max-width:none!important;max-height:none!important;' +
       'min-width:0!important;min-height:0!important;box-sizing:content-box!important;overflow:hidden!important;position:static!important;' +
-      '-webkit-column-width:' + cw + 'px!important;column-width:' + cw + 'px!important;' +
-      '-webkit-column-gap:' + (m[1] + m[3]) + 'px!important;column-gap:' + (m[1] + m[3]) + 'px!important;' +
-      '-webkit-column-count:auto!important;column-count:auto!important;-webkit-column-fill:auto!important;column-fill:auto!important}' +
-      'img,svg,video,canvas,iframe{max-width:' + cw + 'px!important;max-height:' + ch + 'px!important;object-fit:contain}' +
-      'img{height:auto}img,svg,figure{-webkit-column-break-inside:avoid;break-inside:avoid}';
+      (spread
+        ? '-webkit-column-width:auto!important;column-width:auto!important;-webkit-column-count:2!important;column-count:2!important;'
+        : '-webkit-column-width:' + cw + 'px!important;column-width:' + cw + 'px!important;-webkit-column-count:auto!important;column-count:auto!important;') +
+      '-webkit-column-gap:' + gap + 'px!important;column-gap:' + gap + 'px!important;' +
+      '-webkit-column-fill:auto!important;column-fill:auto!important}' +
+      'img,svg,video,canvas,iframe{max-width:' + colW + 'px!important;max-height:' + ch + 'px!important;object-fit:contain}' +
+      'img{height:auto}img,svg,figure{-webkit-column-break-inside:avoid;break-inside:avoid}' +
+      '#recto-pad{-webkit-column-break-before:always;break-before:column;display:block;height:1px;margin:0;padding:0;border:0}';
   }
 
   function apply() {
@@ -55,6 +64,7 @@
   function scrollMax() { return Math.max(0, Math.max(de.scrollHeight, body().scrollHeight) - H); }
 
   function measure() {
+    pad();
     if (scroll) {
       step = Math.max(1, Math.round(H * 0.92));
       count = Math.max(1, Math.ceil(scrollMax() / step) + 1);
@@ -64,6 +74,25 @@
       count = Math.max(1, Math.round((body().scrollWidth + m[1] + m[3]) / W));
       if (page > count - 1) page = count - 1;
     }
+  }
+
+  /*
+   * Two-page mode: an odd number of columns leaves the last screen half full, and the clipped body
+   * cannot scroll that far. An empty column at the end evens it out (it has no text, so text
+   * positions are unaffected).
+   */
+  function pad() {
+    var p = document.getElementById('recto-pad');
+    if (!spread || scroll) {
+      if (p) p.parentNode.removeChild(p);
+      return;
+    }
+    var cols = Math.round((body().scrollWidth + m[1] + m[3]) / (W / 2)) - (p ? 1 : 0);
+    if (cols % 2 === 1 && !p) {
+      p = document.createElement('div');
+      p.id = 'recto-pad';
+      body().appendChild(p);
+    } else if (cols % 2 === 0 && p) p.parentNode.removeChild(p);
   }
 
   /* Position reports carry the reading anchor so the app can save it at any moment. */
@@ -320,15 +349,17 @@
     if (!o) return;
     m = o.m;
     scroll = !!o.scroll;
-    if (o.w) { fixedW = o.w; fixedH = o.h; }
+    if (o.w) { fixedW = o.w; fixedH = o.h; spread = !!o.spread; }
   }
 
   /** The WebView was resized (rotation, split screen): re-layout keeping the position. */
-  R.resize = function (w, h) {
-    if (!ready || (w === fixedW && h === fixedH)) return;
+  R.resize = function (w, h, sp) {
+    sp = !!sp;
+    if (!ready || (w === fixedW && h === fixedH && sp === spread)) return;
     var tp = R.textPos();
     fixedW = w;
     fixedH = h;
+    spread = sp;
     size();
     apply();
     measure();

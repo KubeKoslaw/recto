@@ -34,6 +34,12 @@ Android 7.0 and Android 16.
 * Tap left/right edge or swipe to turn pages, tap the middle for the menu; volume keys and
   keyboard / D-pad / page keys turn pages too. Page turn animations can be switched off (e-ink).
 * Pinch or double-tap zoom with sharp re-rendering, long webtoon strips rendered in tiles.
+* **Two pages like an open book on large screens**: unfolding a foldable (e.g. Honor Magic V3,
+  Galaxy Z Fold, Pixel Fold) or using a tablet in landscape switches books, PDFs and comics to two
+  pages side by side; folding it back returns to one page, keeping the reading position. The first
+  page of a PDF / comic stays alone like a cover, landscape pages stay alone and manga pairs read
+  right to left. Setting *Two pages*: *Large screen* (default), *Off*, or *Landscape too* (also
+  phones in landscape).
 * Reflowable books: Light / Sepia / Dark / Black themes, book or system fonts, line spacing,
   margins, justification, hyphenation, paged (CSS columns) or scroll mode, table of contents,
   full-text search, internal links and footnotes with "back".
@@ -90,6 +96,11 @@ Plain Java and the Android framework only: no AndroidX, no Kotlin runtime, no na
   `Fb2Book`, `OfficeBooks`, `TextBooks`) and shown one chapter at a time in a WebView paginated
   with CSS columns (`assets/reader.js`). Content is served only through request interception: no
   file access, no network, and book scripts are blocked by a Content-Security-Policy.
+* **Screen** (`screen/`): `Spread` decides between one and two pages from the size of the reader's
+  window in dp (shorter side at least 600 dp and close to square or landscape), so it follows
+  folding, rotation and split screen without a hinge sensor or Jetpack WindowManager. `PageView`
+  pairs pages into spreads that meet at the centre (the fold); `reader.js` lays out two CSS columns
+  per screen with the gutter in the middle.
 * **Archives** (`io/`): small ZIP (incl. ZIP64), TAR and RAR readers working with positional reads
   on the file descriptor, so nothing is extracted or copied (streams from cloud providers are
   copied to the cache once).
