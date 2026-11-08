@@ -53,7 +53,12 @@ jobs:
         run: |
           cp app/build/outputs/apk/release/app-release.apk app-release.apk
           cp app/build/outputs/apk/debug/app-debug.apk apk-debug.apk
-          gh release create "$TAG" app-release.apk apk-debug.apk --title "$TAG" --generate-notes
+          # The release may already exist (created on GitHub before the tag build): then add the APKs to it.
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" app-release.apk apk-debug.apk --clobber
+          else
+            gh release create "$TAG" app-release.apk apk-debug.apk --title "$TAG" --generate-notes
+          fi
 
       - name: Remove signing key
         if: always()
