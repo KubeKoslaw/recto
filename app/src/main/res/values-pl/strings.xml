@@ -68,6 +68,10 @@
     <string name="default_comics">Użyj tych ustawień dla wszystkich komiksów</string>
     <string name="default_docs">Użyj tych ustawień dla wszystkich dokumentów</string>
     <string name="saved">Zapisano</string>
+    <string name="spread">Dwie strony (książka)</string>
+    <string name="spread_auto">Duży ekran</string>
+    <string name="spread_off">Wył.</string>
+    <string name="spread_on">Też poziomo</string>
     <string name="rotation">Obrót</string>
     <string name="rotation_auto">Auto</string>
     <string name="rotation_portrait">Pionowo</string>

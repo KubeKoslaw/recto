@@ -408,6 +408,7 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
         flowView = new FlowView(this);
         flowView.setListener(this);
         flowView.setTapZones(prefs.tapZones());
+        flowView.setSpreadMode(prefs.spread());
         content.addView(flowView, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         int ch = 0, tp = -1;
         float frac = 0;
@@ -443,6 +444,7 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
         boolean invert = entry.invert >= 0 ? entry.invert == 1 : (!comic && isNight() && prefs.b("autoInvert", true));
         int bg = comic ? Color.BLACK : (isNight() || invert ? 0xff1b1b1b : 0xffd9d9d6);
         pageView.setOptions(mode == MODE_CONTINUOUS, rtl, fitWidth, invert, prefs.animations(), prefs.tapZones(), prefs.lowMemory(), bg);
+        pageView.setSpreadMode(prefs.spread());
         if (!comic) status.setTextColor(isNight() || invert ? 0xffbbbbbb : 0xff333333);
     }
 
@@ -526,8 +528,8 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
 
     private void updateLabels() {
         if (pageView != null) {
-            int p = pageView.getPage(), n = pageView.getCount();
-            String t = (p + 1) + " / " + n;
+            int p = pageView.getPage(), n = pageView.getCount(), m = pageView.getMate();
+            String t = (m >= 0 ? (Math.min(p, m) + 1) + "–" + (Math.max(p, m) + 1) : String.valueOf(p + 1)) + " / " + n;
             pageLabel.setText(t);
             status.setText(t);
             chapterLabel.setVisibility(View.GONE);
@@ -798,6 +800,13 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
             });
             panel.addView(def);
         }
+        choices(R.string.spread, new int[]{R.string.spread_auto, R.string.spread_off, R.string.spread_on},
+                prefs.spread(), i -> {
+                    prefs.put("spread", i);
+                    if (flowView != null) flowView.setSpreadMode(i);
+                    if (pageView != null) pageView.setSpreadMode(i);
+                    updateLabels();
+                });
         choices(R.string.rotation, new int[]{R.string.rotation_auto, R.string.rotation_portrait, R.string.rotation_landscape},
                 prefs.orientation(), i -> { prefs.put("orientation", i); applyOrientation(); });
     }

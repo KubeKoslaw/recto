@@ -42,6 +42,9 @@ final class Prefs {
 
     int orientation() { return i("orientation", 0); }
 
+    /** Two pages side by side: {@link org.recto.reader.screen.Spread#AUTO} (large screens), OFF or ON. */
+    int spread() { return i("spread", org.recto.reader.screen.Spread.AUTO); }
+
     // Reflowable text
     int fontSize() { return i("fontSize", 100); }
 

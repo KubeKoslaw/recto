@@ -72,6 +72,10 @@
     <string name="default_comics">Use these settings for all comics</string>
     <string name="default_docs">Use these settings for all documents</string>
     <string name="saved">Saved</string>
+    <string name="spread">Two pages (book)</string>
+    <string name="spread_auto">Large screen</string>
+    <string name="spread_off">Off</string>
+    <string name="spread_on">Landscape too</string>
     <string name="rotation">Rotation</string>
     <string name="rotation_auto">Auto</string>
     <string name="rotation_portrait">Portrait</string>
