@@ -9,6 +9,8 @@ import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.RectF;
 import android.graphics.drawable.GradientDrawable;
@@ -46,6 +48,7 @@ import org.recto.reader.flow.FlowView;
 import org.recto.reader.flow.UserFont;
 import org.recto.reader.marks.Marks;
 import org.recto.reader.screen.Light;
+import org.recto.reader.shelf.OpenCover;
 
 import java.io.FileNotFoundException;
 import java.io.InputStream;
@@ -78,6 +81,8 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
     private SeekBar seek;
     private ProgressBar progress;
     private boolean uiShown, seeking, showStatus, destroyed;
+    private int chromeGen, panelGen;
+    private OpenCover openCover;
     private int insetTop, insetBottom, insetLeft, insetRight, cutTop, cutBottom, cutLeft, cutRight;
     private Object backCallback;
     private final HashMap<Integer, List<Object[]>> pdfLinks = new HashMap<>();
@@ -108,6 +113,7 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
         progress = findViewById(R.id.progress);
 
         edgeToEdge();
+        if (getIntent().hasExtra("recto.l")) attachOpen();
         if (prefs.keepScreenOn()) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         applyBrightness();
         applyOrientation();
@@ -156,6 +162,7 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
 
     @Override protected void onDestroy() {
         destroyed = true;
+        if (openCover != null) openCover.stop();
         handler.removeCallbacksAndMessages(null);
         if (pageView != null) pageView.release();
         else if (doc != null && doc.pages != null) doc.close();
@@ -419,6 +426,7 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
 
     private void fail(String msg) {
         if (destroyed) return;
+        if (openCover != null) openCover.dismiss();
         progress.setVisibility(View.GONE);
         dialog().setTitle(R.string.cannot_open).setMessage(msg)
                 .setPositiveButton(android.R.string.ok, (d, w) -> finish())
@@ -457,6 +465,7 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
         entry.title = d.title;
         entry.author = d.author;
         entry.format = d.format;
+        entry.comic = d.comic;
         entry.size = d.size;
         entry.opened = now;
         library.put(entry);
@@ -472,6 +481,7 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
         boolean search = flowView != null || (d.pages instanceof PdfSource && PdfSource.canSearch());
         findViewById(R.id.search).setVisibility(search ? View.VISIBLE : View.GONE);
         updateLabels();
+        if (openCover != null) openCover.reveal();
     }
 
     private void showFixed(Opener.Doc d) {
@@ -586,20 +596,61 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
 
     private void showUi(boolean show) {
         uiShown = show;
-        top.setVisibility(show ? View.VISIBLE : View.GONE);
-        bottom.setVisibility(show && !panelVisible() ? View.VISIBLE : View.GONE);
         if (!show) hidePanel();
+        int gen = ++chromeGen;
+        fade(top, show, gen);
+        fade(bottom, show && !panelVisible(), gen);
         status.setVisibility(!show && showStatus ? View.VISIBLE : View.GONE);
         setSystemBars(show);
         updateLabels();
+    }
+
+    /** Bars fade when page-turn animations are on, and appear at once when they are off. */
+    private void fade(View v, boolean show, int gen) {
+        v.animate().cancel();
+        if (!prefs.animations()) {
+            v.setAlpha(1f);
+            v.setVisibility(show ? View.VISIBLE : View.GONE);
+            return;
+        }
+        if (show) {
+            if (v.getVisibility() != View.VISIBLE) v.setAlpha(0f);
+            v.setVisibility(View.VISIBLE);
+            v.animate().alpha(1f).setDuration(180).start();
+        } else if (v.getVisibility() == View.VISIBLE) {
+            v.animate().alpha(0f).setDuration(160).withEndAction(() -> {
+                if (gen != chromeGen) return;
+                v.setVisibility(View.GONE);
+                v.setAlpha(1f);
+            }).start();
+        }
     }
 
     private boolean panelVisible() { return panelScroll.getVisibility() == View.VISIBLE; }
 
     private void hidePanel() {
         if (!panelVisible()) return;
-        panelScroll.setVisibility(View.GONE);
-        if (uiShown) bottom.setVisibility(View.VISIBLE);
+        final int gen = ++panelGen;
+        panelScroll.animate().cancel();
+        if (!prefs.animations()) {
+            panelScroll.setTranslationY(0);
+            panelScroll.setVisibility(View.GONE);
+            if (uiShown) bottom.setVisibility(View.VISIBLE);
+            updateBack();
+            return;
+        }
+        float h = panelScroll.getHeight() > 0 ? panelScroll.getHeight() : dp(160);
+        panelScroll.animate().translationY(h).setDuration(200).withEndAction(() -> {
+            if (gen != panelGen) return;
+            panelScroll.setVisibility(View.GONE);
+            panelScroll.setTranslationY(0);
+            if (uiShown) {
+                bottom.setAlpha(0f);
+                bottom.setVisibility(View.VISIBLE);
+                bottom.animate().alpha(1f).setDuration(160).start();
+            }
+            updateBack();
+        }).start();
         updateBack();
     }
 
@@ -609,14 +660,60 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
             return;
         }
         buildPanel();
-        panelScroll.setVisibility(View.VISIBLE);
+        panelGen++;
+        bottom.animate().cancel();
         bottom.setVisibility(View.GONE);
+        panelScroll.setAlpha(1f);
+        panelScroll.setVisibility(View.VISIBLE);
         int max = (int) (getResources().getDisplayMetrics().heightPixels * 0.6f);
         panelScroll.measure(View.MeasureSpec.makeMeasureSpec(root.getWidth(), View.MeasureSpec.EXACTLY), View.MeasureSpec.UNSPECIFIED);
         ViewGroup.LayoutParams lp = panelScroll.getLayoutParams();
         lp.height = panelScroll.getMeasuredHeight() > max ? max : ViewGroup.LayoutParams.WRAP_CONTENT;
         panelScroll.setLayoutParams(lp);
+        int slide = panelScroll.getMeasuredHeight();
+        if (!prefs.animations()) {
+            panelScroll.setTranslationY(0);
+        } else {
+            panelScroll.setTranslationY(slide > 0 ? slide : dp(160));
+            panelScroll.animate().translationY(0).setDuration(220).start();
+        }
         updateBack();
+    }
+
+    private void attachOpen() {
+        Intent in = getIntent();
+        Bitmap cover = null;
+        if (in.getBooleanExtra("recto.face", false)) {
+            String id = in.getStringExtra("recto.id");
+            if (id != null) {
+                cover = Covers.cached(id);
+                if (cover == null) {
+                    java.io.File f = Covers.file(this, id);
+                    if (f.isFile()) cover = BitmapFactory.decodeFile(f.getPath());
+                }
+            }
+        }
+        openCover = new OpenCover(this);
+        ((ViewGroup) root).addView(openCover, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        final Bitmap faceBmp = cover;
+        openCover.whenGone(() -> {
+            if (openCover == null) return;
+            ((ViewGroup) root).removeView(openCover);
+            openCover = null;
+        });
+        root.post(() -> {
+            if (destroyed || openCover == null) return;
+            int[] loc = new int[2];
+            root.getLocationOnScreen(loc);
+            RectF start = new RectF(
+                    in.getIntExtra("recto.l", 0) - loc[0],
+                    in.getIntExtra("recto.t", 0) - loc[1],
+                    in.getIntExtra("recto.r", 0) - loc[0],
+                    in.getIntExtra("recto.b", 0) - loc[1]);
+            openCover.show(start, in.getBooleanExtra("recto.face", false), in.getStringExtra("recto.title"),
+                    in.getIntExtra("recto.color", 0xff2f6f5e), in.getFloatExtra("recto.progress", 0f), faceBmp);
+        });
     }
 
     private void updateLabels() {
