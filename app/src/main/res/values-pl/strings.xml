@@ -55,6 +55,10 @@
     <string name="font_serif">Szeryfowa</string>
     <string name="font_sans">Bezszer.</string>
     <string name="font_mono">Stała</string>
+    <string name="font_custom">Własna</string>
+    <string name="font_bad">Ten plik czcionki nie jest obsługiwany</string>
+    <string name="brightness">Jasność</string>
+    <string name="brightness_system">Systemowa</string>
     <string name="line_spacing">Interlinia</string>
     <string name="margins">Marginesy</string>
     <string name="alignment">Wyrównanie</string>

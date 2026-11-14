@@ -18,11 +18,15 @@ final class Prefs {
 
     String s(String k, String def) { return p.getString(k, def); }
 
+    float f(String k, float def) { return p.getFloat(k, def); }
+
     void put(String k, int v) { p.edit().putInt(k, v).apply(); }
 
     void put(String k, boolean v) { p.edit().putBoolean(k, v).apply(); }
 
     void put(String k, String v) { p.edit().putString(k, v).apply(); }
+
+    void put(String k, float v) { p.edit().putFloat(k, v).apply(); }
 
     // App-wide
     boolean keepScreenOn() { return b("keepOn", true); }
@@ -50,6 +54,12 @@ final class Prefs {
 
     /** {@link org.recto.reader.shelf.Shelf} reading-state filter. */
     int shelfFilter() { return i("shelfFilter", org.recto.reader.shelf.Shelf.FILTER_ALL); }
+
+    /** Window brightness, or {@link org.recto.reader.screen.Light#SYSTEM}. */
+    float brightness() { return f("brightness", org.recto.reader.screen.Light.SYSTEM); }
+
+    /** MIME type of the copied user font, when one has been chosen. */
+    String userFontMime() { return s("userFontMime", "font/ttf"); }
 
     // Reflowable text
     int fontSize() { return i("fontSize", 100); }

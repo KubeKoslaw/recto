@@ -43,6 +43,7 @@ import org.recto.reader.fixed.PdfSource;
 import org.recto.reader.flow.FlowBook;
 import org.recto.reader.flow.FlowView;
 import org.recto.reader.marks.Marks;
+import org.recto.reader.screen.Light;
 
 import java.io.FileNotFoundException;
 import java.util.ArrayList;
@@ -105,6 +106,7 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
 
         edgeToEdge();
         if (prefs.keepScreenOn()) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        applyBrightness();
         applyOrientation();
         setSystemBars(false);
 
@@ -246,6 +248,17 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
     }
 
     @SuppressLint("SourceLockedOrientationActivity") // user-chosen rotation lock
+    private void applyBrightness() {
+        WindowManager.LayoutParams lp = getWindow().getAttributes();
+        lp.screenBrightness = Light.window(prefs.brightness());
+        getWindow().setAttributes(lp);
+    }
+
+    private String brightnessLabel() {
+        float v = prefs.brightness();
+        return Light.system(v) ? getString(R.string.brightness_system) : Light.percent(v) + "%";
+    }
+
     private void applyOrientation() {
         switch (prefs.orientation()) {
             case 1: setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT); break;
@@ -828,6 +841,11 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
                     if (pageView != null) pageView.setSpreadMode(i);
                     updateLabels();
                 });
+        stepper(R.string.brightness, brightnessLabel(), d -> {
+            prefs.put("brightness", Light.step(prefs.brightness(), d));
+            applyBrightness();
+            return brightnessLabel();
+        });
         choices(R.string.rotation, new int[]{R.string.rotation_auto, R.string.rotation_portrait, R.string.rotation_landscape},
                 prefs.orientation(), i -> { prefs.put("orientation", i); applyOrientation(); });
     }
