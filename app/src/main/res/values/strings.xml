@@ -7,6 +7,15 @@
     <string name="add_folder">Add folder</string>
     <string name="filter">Filter</string>
     <string name="filter_hint">Title or author</string>
+    <string name="sort_recent">Recent</string>
+    <string name="sort_title">Title</string>
+    <string name="sort_author">Author</string>
+    <string name="sort_progress">Progress</string>
+    <string name="shelf_all">All</string>
+    <string name="shelf_new">New</string>
+    <string name="shelf_reading">Reading</string>
+    <string name="shelf_finished">Finished</string>
+    <string name="shelf_empty">Nothing matches this filter.</string>
     <string name="empty">No books yet.\n\nTap + to open a file, or add a folder so books, comics and documents in it show up here.\n\nPDF · EPUB · MOBI · AZW3 · FB2 · CBZ · CBR · CBT · DOCX · ODT · TXT · Markdown · HTML · images</string>
     <string name="just_now">just now</string>
     <string name="status_new">New</string>

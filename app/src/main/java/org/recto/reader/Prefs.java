@@ -45,6 +45,12 @@ final class Prefs {
     /** Two pages side by side: {@link org.recto.reader.screen.Spread#AUTO} (large screens), OFF or ON. */
     int spread() { return i("spread", org.recto.reader.screen.Spread.AUTO); }
 
+    /** {@link org.recto.reader.shelf.Shelf} sort mode. */
+    int shelfSort() { return i("shelfSort", org.recto.reader.shelf.Shelf.SORT_RECENT); }
+
+    /** {@link org.recto.reader.shelf.Shelf} reading-state filter. */
+    int shelfFilter() { return i("shelfFilter", org.recto.reader.shelf.Shelf.FILTER_ALL); }
+
     // Reflowable text
     int fontSize() { return i("fontSize", 100); }
 
