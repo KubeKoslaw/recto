@@ -23,6 +23,8 @@ import org.json.JSONObject;
 import org.recto.reader.screen.Spread;
 
 import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -55,6 +57,8 @@ public final class FlowView extends FrameLayout {
         public int fontPercent = 100, font, lineHeight, align, marginH, marginV, insetTop, insetBottom, insetLeft, insetRight;
         public int bg = 0xffffffff, fg = 0xff1a1a1a, link = 0xff1a5fb4;
         public boolean forceBg, forceFg, hyphens, scroll;
+        /** Absolute URL of a user font on the book origin, or null. Never a file path. */
+        public String userFontUrl;
 
         public Style copy() {
             Style s = new Style();
@@ -62,6 +66,7 @@ public final class FlowView extends FrameLayout {
             s.marginH = marginH; s.marginV = marginV; s.insetTop = insetTop; s.insetBottom = insetBottom;
             s.insetLeft = insetLeft; s.insetRight = insetRight; s.bg = bg; s.fg = fg; s.link = link;
             s.forceBg = forceBg; s.forceFg = forceFg; s.hyphens = hyphens; s.scroll = scroll;
+            s.userFontUrl = userFontUrl;
             return s;
         }
     }
@@ -85,6 +90,8 @@ public final class FlowView extends FrameLayout {
     private int chapter = -1, page, pages = 1, textPos = -1;
     private boolean loading, selecting, tapZones = true, destroyed;
     private int spreadMode = Spread.OFF;
+    private File userFontFile;
+    private String userFontMime = "font/ttf";
     private String target;
     private final List<int[]> back = new ArrayList<>(); // chapter, text position
     private long[] cumulative;
@@ -181,10 +188,23 @@ public final class FlowView extends FrameLayout {
 
     public boolean isLoading() { return loading; }
 
+    /** User typeface copied into app files. The page fetches it by the intercepted path, not this file. */
+    public void setUserFont(File file, String mime) {
+        userFontFile = file != null && file.isFile() ? file : null;
+        if (mime != null && !mime.isEmpty()) userFontMime = mime;
+    }
+
+    private Style adopt(Style s) {
+        Style c = s.copy();
+        if (c.font == UserFont.SLOT && userFontFile != null) c.userFontUrl = base + UserFont.PATH;
+        else c.userFontUrl = null;
+        return c;
+    }
+
     /** Opens a book at a chapter with a target: text offset (&gt;= 0) or fraction of the chapter. */
     public void open(FlowBook b, Style s, int ch, int textPos, float frac) {
         book = b;
-        style = s.copy();
+        style = adopt(s);
         web.getSettings().setTextZoom(style.fontPercent);
         web.setBackgroundColor(style.bg);
         cumulative = new long[b.chapters.size() + 1];
@@ -303,7 +323,7 @@ public final class FlowView extends FrameLayout {
 
     public void setStyle(Style s) {
         boolean zoom = s.fontPercent != style.fontPercent;
-        style = s.copy();
+        style = adopt(s);
         web.setBackgroundColor(style.bg);
         if (loading || chapter < 0) {
             web.getSettings().setTextZoom(style.fontPercent);
@@ -349,7 +369,10 @@ public final class FlowView extends FrameLayout {
         if (s.forceBg) c.append("body *{background-color:transparent!important;border-color:currentColor!important}");
         if (s.forceFg) c.append("body *{color:inherit!important}a,a *{color:").append(hex(s.link)).append("!important}");
         c.append("body *{max-width:100%}pre{white-space:pre-wrap!important;word-wrap:break-word}");
-        if (s.font > 0 && s.font < FONTS.length)
+        if (s.font == UserFont.SLOT && s.userFontUrl != null) {
+            c.append(UserFont.face(s.userFontUrl));
+            c.append(UserFont.family());
+        } else if (s.font > 0 && s.font < FONTS.length)
             c.append("body,body *:not(pre):not(code):not(kbd):not(samp):not(tt){font-family:").append(FONTS[s.font]).append("!important}");
         if (s.lineHeight > 0)
             c.append("body,body p,body div,body li,body span,body blockquote,body dd,body td{line-height:")
@@ -522,6 +545,14 @@ public final class FlowView extends FrameLayout {
         String prefix = Uri.parse(base).getPath();
         if (path == null || prefix == null || !path.startsWith(prefix)) return notFound(headers);
         path = path.substring(prefix.length());
+        if (UserFont.PATH.equals(path)) {
+            if (userFontFile == null) return notFound(headers);
+            try {
+                return new WebResourceResponse(userFontMime, null, 200, "OK", headers, new FileInputStream(userFontFile));
+            } catch (IOException e) {
+                return notFound(headers);
+            }
+        }
         try {
             int ch = book.chapterIndex(path);
             if (ch >= 0) {

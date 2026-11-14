@@ -4,6 +4,7 @@ import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
@@ -42,10 +43,12 @@ import org.recto.reader.fixed.PageView;
 import org.recto.reader.fixed.PdfSource;
 import org.recto.reader.flow.FlowBook;
 import org.recto.reader.flow.FlowView;
+import org.recto.reader.flow.UserFont;
 import org.recto.reader.marks.Marks;
 import org.recto.reader.screen.Light;
 
 import java.io.FileNotFoundException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -57,7 +60,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /** Shows one document: fixed pages ({@link PageView}) or reflowable text ({@link FlowView}). */
 public final class ReaderActivity extends Activity implements PageView.Listener, FlowView.Listener {
     private static final int MODE_PAGED = 0, MODE_CONTINUOUS = 1;
-    private static final int REQ_STORAGE = 7;
+    private static final int REQ_STORAGE = 7, REQ_FONT = 8;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService bg = Executors.newSingleThreadExecutor();
@@ -324,6 +327,81 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
         else fail(getString(R.string.err_access));
     }
 
+    @Override protected void onActivityResult(int request, int result, Intent data) {
+        super.onActivityResult(request, result, data);
+        if (request != REQ_FONT) return;
+        if (result != RESULT_OK || data == null || data.getData() == null) {
+            if (panelVisible()) buildPanel();
+            return;
+        }
+        final Uri picked = data.getData();
+        final String name = fontName(picked);
+        if (!UserFont.supported(name)) {
+            Toast.makeText(this, R.string.font_bad, Toast.LENGTH_SHORT).show();
+            if (panelVisible()) buildPanel();
+            return;
+        }
+        bg.execute(() -> {
+            long stored;
+            try (InputStream in = getContentResolver().openInputStream(picked)) {
+                stored = in == null ? 0 : UserFont.store(in, UserFont.file(getFilesDir()));
+            } catch (Exception e) {
+                stored = 0;
+            }
+            final long n = stored;
+            handler.post(() -> {
+                if (destroyed) return;
+                if (n < 0) Toast.makeText(this, R.string.err_too_large, Toast.LENGTH_SHORT).show();
+                else if (n == 0) Toast.makeText(this, R.string.font_bad, Toast.LENGTH_SHORT).show();
+                else {
+                    prefs.put("userFontMime", UserFont.mime(name));
+                    prefs.put("font", UserFont.SLOT);
+                    if (flowView != null) flowView.setUserFont(UserFont.file(getFilesDir()), prefs.userFontMime());
+                    applyFlowStyle();
+                    Toast.makeText(this, R.string.saved, Toast.LENGTH_SHORT).show();
+                }
+                if (panelVisible()) buildPanel();
+            });
+        });
+    }
+
+    private String fontName(Uri u) {
+        try (android.database.Cursor c = getContentResolver().query(u, new String[]{android.provider.OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (c != null && c.moveToFirst() && c.getString(0) != null) return c.getString(0);
+        } catch (Exception ignored) {}
+        String last = u.getLastPathSegment();
+        return last == null ? "" : last;
+    }
+
+    private void chooseFont(int i) {
+        if (i != UserFont.SLOT) {
+            prefs.put("font", i);
+            applyFlowStyle();
+            return;
+        }
+        if (prefs.font() != UserFont.SLOT && UserFont.file(getFilesDir()).isFile()) {
+            prefs.put("font", UserFont.SLOT);
+            if (flowView != null) flowView.setUserFont(UserFont.file(getFilesDir()), prefs.userFontMime());
+            applyFlowStyle();
+            return;
+        }
+        pickFont();
+    }
+
+    private void pickFont() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*");
+        i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
+                "font/ttf", "font/otf", "font/woff", "application/x-font-ttf",
+                "application/x-font-otf", "application/font-sfnt", "application/octet-stream"});
+        try {
+            startActivityForResult(i, REQ_FONT);
+        } catch (ActivityNotFoundException e) {
+            Toast.makeText(this, R.string.no_picker, Toast.LENGTH_LONG).show();
+        }
+    }
+
     private void askPassword() {
         progress.setVisibility(View.GONE);
         AlertDialog.Builder b = dialog();
@@ -423,6 +501,7 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
         flowView.setListener(this);
         flowView.setTapZones(prefs.tapZones());
         flowView.setSpreadMode(prefs.spread());
+        flowView.setUserFont(UserFont.file(getFilesDir()), prefs.userFontMime());
         content.addView(flowView, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         int ch = 0, tp = -1;
         float frac = 0;
@@ -790,8 +869,8 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
                 applyFlowStyle();
                 return prefs.fontSize() + "%";
             });
-            choices(R.string.font, new int[]{R.string.font_book, R.string.font_serif, R.string.font_sans, R.string.font_mono},
-                    prefs.font(), i -> { prefs.put("font", i); applyFlowStyle(); });
+            choices(R.string.font, new int[]{R.string.font_book, R.string.font_serif, R.string.font_sans, R.string.font_mono, R.string.font_custom},
+                    Math.min(prefs.font(), UserFont.SLOT), this::chooseFont);
             final int[] lh = {0, 12, 14, 16, 18, 20};
             int cur = 0;
             for (int i = 0; i < lh.length; i++) if (lh[i] == prefs.lineHeight()) cur = i;
