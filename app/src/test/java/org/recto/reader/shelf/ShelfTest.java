@@ -32,4 +32,16 @@ public class ShelfTest {
         assertEquals(0, Shelf.compare(Shelf.SORT_AUTHOR, "Same", "Austen", 1, 0, "Same", "Austen", 9, 1));
         assertTrue(Shelf.compare(Shelf.SORT_PROGRESS, "A", null, 1, 0.2f, "B", null, 1, 0.9f) > 0);
     }
+
+    @Test public void coversFaceForwardAndNovelsAreSpines() {
+        assertTrue(Shelf.face("CBZ", false));
+        assertTrue(Shelf.face("cbr", false));
+        assertTrue(Shelf.face("jpg", false));
+        assertTrue(Shelf.face("EPUB", true));
+        assertFalse(Shelf.face("EPUB", false));
+        assertFalse(Shelf.face("PDF", false));
+        assertFalse(Shelf.face("MOBI", false));
+        assertFalse(Shelf.face(null, false));
+        assertEquals(Shelf.spineColor("same"), Shelf.spineColor("same"));
+    }
 }

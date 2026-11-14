@@ -13,6 +13,7 @@
     <string name="shelf_reading">Czytane</string>
     <string name="shelf_finished">Skończone</string>
     <string name="shelf_empty">Nic nie pasuje do tego filtra.</string>
+    <string name="bookshelf">Półka</string>
     <string name="empty">Brak książek.\n\nDotknij +, aby otworzyć plik, lub dodaj folder - książki, komiksy i dokumenty z niego pojawią się tutaj.\n\nPDF · EPUB · MOBI · AZW3 · FB2 · CBZ · CBR · CBT · DOCX · ODT · TXT · Markdown · HTML · obrazy</string>
     <string name="just_now">przed chwilą</string>
     <string name="status_new">Nowa</string>

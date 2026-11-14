@@ -77,25 +77,41 @@
         android:layout_height="0dp"
         android:layout_weight="1">
 
-        <ListView
-            android:id="@+id/list"
+        <ScrollView
+            android:id="@+id/scroller"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:clipToPadding="false"
-            android:divider="@null"
-            android:paddingBottom="96dp" />
+            android:fillViewport="true"
+            android:scrollbars="none">
 
-        <TextView
-            android:id="@+id/empty"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:gravity="center"
-            android:lineSpacingMultiplier="1.3"
-            android:padding="40dp"
-            android:text="@string/empty"
-            android:textColor="?android:attr/textColorSecondary"
-            android:textSize="15sp"
-            android:visibility="gone" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/empty"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:lineSpacingMultiplier="1.3"
+                    android:paddingStart="32dp"
+                    android:paddingTop="28dp"
+                    android:paddingEnd="32dp"
+                    android:paddingBottom="4dp"
+                    android:text="@string/empty"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="15sp"
+                    android:visibility="gone" />
+
+                <org.recto.reader.shelf.ShelfBoard
+                    android:id="@+id/board"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:contentDescription="@string/bookshelf" />
+            </LinearLayout>
+        </ScrollView>
 
         <ImageButton
             android:id="@+id/open"

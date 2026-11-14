@@ -11,4 +11,6 @@
     <color name="bar">#F0161616</color>
     <color name="panel">#FF1C1C1C</color>
     <color name="icon_bg">#2F6F5E</color>
+    <color name="shelf_wall">#F4EFE6</color>
+    <color name="shelf_wall_dark">#1C1916</color>
 </resources>
