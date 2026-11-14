@@ -29,6 +29,10 @@ public final class MobiBook {
 
     private static final int NULL = 0xffffffff;
     private static final String CSS = "img{max-width:100%;height:auto}";
+    /** One PDB record. Larger records are rejected instead of allocated. */
+    private static final int RECORD_CAP = 64 << 20;
+    /** Decompressed embedded font. A hostile header must not allocate more than this. */
+    private static final int FONT_CAP = 16 << 20;
 
     private Seekable src;
     private int[] offsets;
@@ -36,14 +40,22 @@ public final class MobiBook {
 
     // ---- PDB records ---------------------------------------------------------------------------
 
-    private byte[] record(int i) throws IOException { return recordHead(i, Integer.MAX_VALUE); }
+    private byte[] record(int i) throws IOException { return recordHead(i, RECORD_CAP, true); }
 
     /** The first {@code max} bytes of a record (the whole record if it is shorter). */
-    private byte[] recordHead(int i, int max) throws IOException {
+    private byte[] recordHead(int i, int max) throws IOException { return recordHead(i, max, false); }
+
+    /**
+     * When {@code whole} is set, a record longer than {@code max} is rejected before any buffer
+     * is allocated. A short head read of a large record is still allowed.
+     */
+    private byte[] recordHead(int i, int max, boolean whole) throws IOException {
         if (i < 0 || i >= offsets.length) throw new IOException("Bad record " + i);
         long start = offsets[i] & 0xffffffffL, end = i + 1 < offsets.length ? offsets[i + 1] & 0xffffffffL : fileSize;
         if (end < start || end > fileSize) throw new IOException("Corrupt record table");
-        byte[] b = new byte[(int) Math.min(max, end - start)];
+        long len = end - start;
+        if (whole && len > max) throw new IOException("Record too large");
+        byte[] b = new byte[(int) Math.min(max, len)];
         src.readFully(start, b, 0, b.length);
         return b;
     }
@@ -534,26 +546,38 @@ public final class MobiBook {
         }
     }
 
-    private static byte[] font(byte[] r) {
+    /** Embedded FONT record, or null when the header is out of range. */
+    static byte[] font(byte[] r) {
         try {
-            int usize = u32(r, 4), flags = u32(r, 8), dstart = u32(r, 12), xlen = u32(r, 16), xstart = u32(r, 20);
-            byte[] d = new byte[r.length - dstart];
-            System.arraycopy(r, dstart, d, 0, d.length);
+            // Header fields are unsigned. The signed helper would turn a huge size into a negative
+            // length, and a large positive size would allocate before the catch could run.
+            long usize = u32(r, 4) & 0xffffffffL, flags = u32(r, 8) & 0xffffffffL;
+            long dstart = u32(r, 12) & 0xffffffffL, xlen = u32(r, 16) & 0xffffffffL, xstart = u32(r, 20) & 0xffffffffL;
+            if (dstart > r.length) return null;
+            int ds = (int) dstart;
+            byte[] d = new byte[r.length - ds];
+            System.arraycopy(r, ds, d, 0, d.length);
             if ((flags & 2) != 0 && xlen > 0) {
-                for (int i = 0; i < Math.min(1040, d.length); i++) d[i] ^= r[xstart + (i % xlen)];
+                if (xlen > r.length || xstart > r.length || xstart + xlen > r.length) return null;
+                int xs = (int) xstart, xl = (int) xlen;
+                for (int i = 0; i < Math.min(1040, d.length); i++) d[i] ^= r[xs + (i % xl)];
             }
             if ((flags & 1) != 0) {
+                if (usize == 0 || usize > FONT_CAP) return null;
                 Inflater inf = new Inflater();
-                inf.setInput(d);
-                byte[] out = new byte[usize];
-                int got = 0;
-                while (!inf.finished() && got < out.length) {
-                    int k = inf.inflate(out, got, out.length - got);
-                    if (k == 0 && (inf.needsInput() || inf.needsDictionary())) break;
-                    got += k;
+                try {
+                    inf.setInput(d);
+                    byte[] out = new byte[(int) usize];
+                    int got = 0;
+                    while (!inf.finished() && got < out.length) {
+                        int k = inf.inflate(out, got, out.length - got);
+                        if (k == 0 && (inf.needsInput() || inf.needsDictionary())) break;
+                        got += k;
+                    }
+                    return out;
+                } finally {
+                    inf.end();
                 }
-                inf.end();
-                return out;
             }
             return d;
         } catch (Exception e) {

@@ -83,7 +83,7 @@ public final class FlowView extends FrameLayout {
     private FlowBook book;
     private Style style = new Style();
     private int chapter = -1, page, pages = 1, textPos = -1;
-    private boolean loading, selecting, tapZones = true;
+    private boolean loading, selecting, tapZones = true, destroyed;
     private int spreadMode = Spread.OFF;
     private String target;
     private final List<int[]> back = new ArrayList<>(); // chapter, text position
@@ -377,13 +377,18 @@ public final class FlowView extends FrameLayout {
     public void onResume() { web.onResume(); }
 
     public void destroy() {
+        destroyed = true;
+        listener = null;
+        ui.removeCallbacksAndMessages(null);
         web.stopLoading();
         web.removeJavascriptInterface("Recto");
         removeView(web);
         web.destroy();
+        book = null;
     }
 
     private void onReady(int p, int n, int tp) {
+        if (destroyed) return;
         loading = false;
         page = p;
         pages = Math.max(1, n);
@@ -393,7 +398,7 @@ public final class FlowView extends FrameLayout {
     }
 
     private void onLink(String url) {
-        if (book == null) return;
+        if (destroyed || book == null) return;
         if (url.startsWith(base)) {
             String rest = url.substring(base.length());
             int hash = rest.indexOf('#');
@@ -412,11 +417,13 @@ public final class FlowView extends FrameLayout {
     }
 
     private final class Bridge {
-        @JavascriptInterface public void ready(int p, int n, int tp) { ui.post(() -> onReady(p, n, tp)); }
+        @JavascriptInterface public void ready(int p, int n, int tp) {
+            ui.post(() -> { if (!destroyed) onReady(p, n, tp); });
+        }
 
         @JavascriptInterface public void pos(int p, int n, int tp) {
             ui.post(() -> {
-                if (loading) return;
+                if (destroyed || loading) return;
                 page = p;
                 pages = Math.max(1, n);
                 textPos = tp;
@@ -426,6 +433,7 @@ public final class FlowView extends FrameLayout {
 
         @JavascriptInterface public void tap(float x, float y) {
             ui.post(() -> {
+                if (destroyed) return;
                 boolean rtl = book != null && book.rtl;
                 if (!tapZones) { if (listener != null) listener.onCenterTap(); }
                 else if (x < 0.3f) { if (rtl) next(); else prev(); }
@@ -434,7 +442,7 @@ public final class FlowView extends FrameLayout {
             });
         }
 
-        @JavascriptInterface public void link(String url) { ui.post(() -> onLink(url)); }
+        @JavascriptInterface public void link(String url) { ui.post(() -> { if (!destroyed) onLink(url); }); }
     }
 
     private class Client extends WebViewClient {
@@ -467,7 +475,7 @@ public final class FlowView extends FrameLayout {
         @Override public void onPageStarted(WebView view, String url, Bitmap favicon) {}
 
         @Override public void onPageFinished(WebView view, String url) {
-            if (book == null || chapter < 0 || !loading) return;
+            if (destroyed || book == null || chapter < 0 || !loading) return;
             String lang = book.language != null ? JSONObject.quote(book.language) : "null";
             view.evaluateJavascript(readerJs + "\n__R.init({\"m\":" + layoutOptsArray() + ",\"scroll\":" + style.scroll
                     + sizeOpts() + ",\"lang\":" + lang + ",\"target\":" + target + "});", null);
@@ -479,11 +487,15 @@ public final class FlowView extends FrameLayout {
     @TargetApi(26)
     private final class Client26 extends Client {
         @Override public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+            if (destroyed) return true;
+            // load() clears textPos, so keep the character anchor (or the page fraction) first.
+            int tp = textPos;
             float frac = pages > 1 ? page / (float) pages : 0;
+            String restore = tp >= 0 ? "{\"t\":\"text\",\"v\":" + tp + "}" : "{\"t\":\"frac\",\"v\":" + frac + "}";
             removeView(web);
             web.destroy();
             createWeb();
-            if (book != null && chapter >= 0) load(chapter, "{\"t\":\"frac\",\"v\":" + frac + "}");
+            if (book != null && chapter >= 0) load(chapter, restore);
             return true;
         }
     }

@@ -69,6 +69,9 @@ public final class PageView extends View {
     private int count;
     private float[] pw = new float[0], ph = new float[0];
     private boolean[] known = new boolean[0];
+    /** Failed size probes per page. After {@link #SIZE_TRIES} the placeholder size is kept. */
+    private int[] sizeFails = new int[0];
+    private static final int SIZE_TRIES = 3;
     private float[] utop = new float[1];
     /** Two-page mode: the other page of the same spread (-1 if alone) and the spread's first page. */
     private int[] mate = new int[0], lead = new int[0];
@@ -157,6 +160,7 @@ public final class PageView extends View {
         pw = new float[count];
         ph = new float[count];
         known = new boolean[count];
+        sizeFails = new int[count];
         for (int i = 0; i < count; i++) {
             pw[i] = firstW;
             ph[i] = firstH;
@@ -265,17 +269,26 @@ public final class PageView extends View {
             if (!isVisible(t.page)) {
                 cacheBytes -= t.bmp.getByteCount();
                 it.remove();
+                recycle(t.bmp);
             }
         }
+        for (Tile t : patches) recycle(t.bmp);
         patches.clear();
     }
 
     private void clearCache() {
+        for (Tile t : cache.values()) recycle(t.bmp);
+        for (Tile t : patches) recycle(t.bmp);
         cache.clear();
         patches.clear();
         failed.clear();
         retryAt.clear();
         cacheBytes = 0;
+    }
+
+    /** Pixel storage is native through Android 7, so a dropped tile is released here. */
+    private static void recycle(Bitmap b) {
+        if (b != null && !b.isRecycled()) b.recycle();
     }
 
     // ---- geometry -----------------------------------------------------------------------------
@@ -1052,11 +1065,20 @@ public final class PageView extends View {
         retryAt.remove(j.key);
         Tile t = new Tile(j.page, j.scale, j.region, b);
         if (j.type == Job.PATCH) {
-            for (Iterator<Tile> it = patches.iterator(); it.hasNext(); ) if (it.next().page == j.page) it.remove();
+            for (Iterator<Tile> it = patches.iterator(); it.hasNext(); ) {
+                Tile old = it.next();
+                if (old.page != j.page) continue;
+                it.remove();
+                if (old.bmp != b) recycle(old.bmp);
+            }
             if (zoom > 1.01f) patches.add(t);
+            else recycle(b);
         } else {
             Tile old = cache.put(j.key, t);
-            if (old != null) cacheBytes -= old.bmp.getByteCount();
+            if (old != null) {
+                cacheBytes -= old.bmp.getByteCount();
+                if (old.bmp != b) recycle(old.bmp);
+            }
             cacheBytes += b.getByteCount();
             evict();
         }
@@ -1071,6 +1093,7 @@ public final class PageView extends View {
             java.util.Map.Entry<Long, Tile> e = it.next();
             if (wanted.contains(e.getKey()) || isVisible(e.getValue().page)) continue;
             cacheBytes -= e.getValue().bmp.getByteCount();
+            recycle(e.getValue().bmp);
             it.remove();
         }
     }
@@ -1166,8 +1189,11 @@ public final class PageView extends View {
                 final Job fj = j;
                 ui.post(() -> {
                     if (fj.type == Job.SIZES && fs != null) {
-                        // Mark failed probes as known so they are not retried forever.
-                        for (int k = 0; k * 2 < fs.length; k++) if (fs[k * 2] < 0 && fj.page + k < count) known[fj.page + k] = true;
+                        // Retry a failed probe a few times, then keep the placeholder size.
+                        for (int k = 0; k * 2 < fs.length; k++) {
+                            int i = fj.page + k;
+                            if (fs[k * 2] < 0 && i < sizeFails.length && ++sizeFails[i] >= SIZE_TRIES) known[i] = true;
+                        }
                     }
                     deliver(fj, fb, fs, fe, fo);
                 });

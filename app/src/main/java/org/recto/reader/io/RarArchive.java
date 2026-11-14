@@ -49,6 +49,11 @@ public final class RarArchive extends Archive {
         return false;
     }
 
+    private boolean splitImage;
+
+    /** True if a picture is split across volumes. Those parts are omitted from {@link #entries()}. */
+    public boolean hasSplitImage() { return splitImage; }
+
     private void readV4() throws IOException {
         long pos = 7, size = src.size();
         byte[] h = new byte[32];
@@ -72,6 +77,7 @@ public final class RarArchive extends Archive {
                 if (p + nameSize > hsize) throw new IOException("Corrupt RAR archive");
                 String name = decodeV4Name(fh, p, nameSize, (flags & 0x200) != 0).replace('\\', '/');
                 boolean dir = (flags & 0xe0) == 0xe0, enc = (flags & 0x04) != 0, split = (flags & 0x03) != 0;
+                if (split && !dir && org.recto.reader.util.Text.isImageName(name)) splitImage = true;
                 if (!dir && !split) entries.add(new RarEntry(name, unp, pos + hsize, method == 0x30 && !enc));
                 add = pack;
             } else if (type == 0x7b) {
@@ -172,6 +178,7 @@ public final class RarArchive extends Archive {
                 boolean enc = extra > 0 && hasEncryptionRecord((int) (vbuf.length - extra), vbuf.length);
                 boolean split = (flags & (0x08 | 0x10)) != 0, dir = (fflags & 1) != 0;
                 boolean stored = ((comp >> 7) & 7) == 0 && !enc;
+                if (split && !dir && org.recto.reader.util.Text.isImageName(name)) splitImage = true;
                 if (!dir && !split) entries.add(new RarEntry(name, unp, hstart + hsize, stored));
             }
             pos = hstart + hsize + data;

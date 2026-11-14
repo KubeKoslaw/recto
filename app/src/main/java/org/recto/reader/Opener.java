@@ -106,11 +106,11 @@ final class Opener {
             } else if (RarArchive.isRar(head, n)) {
                 RarArchive rar = new RarArchive(src);
                 keep = true;
-                openComic(rar, d, "CBR");
-                if (rar.hasCompressed()) {
+                if (rar.hasCompressed() || rar.hasSplitImage()) {
                     keep = false;
                     throw new Failure(R.string.err_rar);
                 }
+                openComic(rar, d, "CBR");
             } else if (TarArchive.isTar(head, n)) {
                 keep = true;
                 openComic(new TarArchive(src), d, "CBT");
@@ -300,7 +300,7 @@ final class Opener {
                     case "series": series = Xml.text(p); break;
                     case "number": number = Xml.text(p); break;
                     case "writer": writer = Xml.text(p); break;
-                    case "manga": d.rtl = Xml.text(p).equalsIgnoreCase("YesAndRightToLeft"); break;
+                    case "manga": d.rtl = mangaRtl(Xml.text(p)); break;
                     default: break;
                 }
             }
@@ -310,5 +310,10 @@ final class Opener {
             } else if (title != null && !title.isEmpty()) d.title = title;
             if (writer != null && !writer.isEmpty()) d.author = writer;
         } catch (Exception ignored) {}
+    }
+
+    /** ComicInfo.xml {@code Manga}: {@code Yes} and {@code YesAndRightToLeft} read right to left. */
+    static boolean mangaRtl(String v) {
+        return v != null && (v.equalsIgnoreCase("Yes") || v.equalsIgnoreCase("YesAndRightToLeft"));
     }
 }
