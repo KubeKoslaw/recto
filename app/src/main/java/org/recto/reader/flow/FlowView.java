@@ -230,6 +230,13 @@ public final class FlowView extends FrameLayout {
         });
     }
 
+    /** Jumps to a stored position: chapter, character offset, and fraction of that chapter. */
+    public void goPos(int ch, int textPos, float frac) {
+        if (book == null || book.chapters.isEmpty()) return;
+        ch = Math.max(0, Math.min(book.chapters.size() - 1, ch));
+        load(ch, textPos >= 0 ? textTarget(textPos) : "{\"t\":\"frac\",\"v\":" + frac + "}");
+    }
+
     public void goChapter(int ch, String anchor) {
         if (book == null || ch < 0 || ch >= book.chapters.size()) return;
         String t = anchor != null ? "{\"t\":\"anchor\",\"v\":" + JSONObject.quote(anchor) + "}" : "{\"t\":\"page\",\"v\":0}";

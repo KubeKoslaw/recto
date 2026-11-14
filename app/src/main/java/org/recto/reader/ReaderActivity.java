@@ -42,6 +42,7 @@ import org.recto.reader.fixed.PageView;
 import org.recto.reader.fixed.PdfSource;
 import org.recto.reader.flow.FlowBook;
 import org.recto.reader.flow.FlowView;
+import org.recto.reader.marks.Marks;
 
 import java.io.FileNotFoundException;
 import java.util.ArrayList;
@@ -569,17 +570,37 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
         handler.removeCallbacks(saveLater);
         if (entry == null) return;
         entry.opened = System.currentTimeMillis();
-        if (pageView != null && pageView.getCount() > 0) {
-            int p = pageView.getPage();
-            entry.pos = "p:" + p + ":" + String.format(Locale.ROOT, "%.4f", pageView.pageOffset());
-            entry.progress = (p + 1f) / pageView.getCount();
-            library.put(entry);
-        } else if (flowView != null && !flowView.isLoading() && flowView.chapter() >= 0) {
+        String pos = currentPos();
+        if (pos == null) return;
+        entry.pos = pos;
+        if (pageView != null && pageView.getCount() > 0) entry.progress = (pageView.getPage() + 1f) / pageView.getCount();
+        else if (flowView != null) entry.progress = flowView.progress();
+        library.put(entry);
+    }
+
+    /** Same encoding as {@link #savePosition()}: {@code p:page:offset} or {@code c:chapter:text:fraction}. */
+    private String currentPos() {
+        if (pageView != null && pageView.getCount() > 0)
+            return "p:" + pageView.getPage() + ":" + String.format(Locale.ROOT, "%.4f", pageView.pageOffset());
+        if (flowView != null && !flowView.isLoading() && flowView.chapter() >= 0) {
             float frac = flowView.pages() > 0 ? flowView.page() / (float) flowView.pages() : 0;
-            entry.pos = "c:" + flowView.chapter() + ":" + flowView.textPos() + ":" + String.format(Locale.ROOT, "%.4f", frac);
-            entry.progress = flowView.progress();
-            library.put(entry);
+            return "c:" + flowView.chapter() + ":" + flowView.textPos() + ":" + String.format(Locale.ROOT, "%.4f", frac);
         }
+        return null;
+    }
+
+    private String bookmarkLabel() {
+        if (pageView != null && pageView.getCount() > 0) {
+            int p = pageView.getPage(), m = pageView.getMate();
+            if (m >= 0) return (Math.min(p, m) + 1) + "\u2013" + (Math.max(p, m) + 1);
+            return getString(R.string.page_n, p + 1);
+        }
+        if (flowView != null && flowView.book() != null) {
+            String ch = chapterTitle(flowView.book(), flowView.chapter());
+            if (ch != null && !ch.isEmpty()) return ch;
+            return Math.round(flowView.progress() * 100) + "%";
+        }
+        return "";
     }
 
     // ---- listeners from the views -------------------------------------------------------------
@@ -916,9 +937,13 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
     private void showMore(View anchor) {
         PopupMenu m = new PopupMenu(this, anchor);
         m.getMenu().add(0, 1, 0, pageView != null ? R.string.go_to_page : R.string.go_to_percent);
+        m.getMenu().add(0, 3, 0, R.string.bookmark);
+        m.getMenu().add(0, 4, 0, R.string.bookmarks);
         m.getMenu().add(0, 2, 0, R.string.book_info);
         m.setOnMenuItemClickListener(item -> {
             if (item.getItemId() == 1) showGoTo();
+            else if (item.getItemId() == 3) addBookmark();
+            else if (item.getItemId() == 4) showBookmarks();
             else showInfo();
             return true;
         });
@@ -944,6 +969,88 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
                 .setNegativeButton(android.R.string.cancel, null).create();
         d.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
         d.show();
+    }
+
+    private void addBookmark() {
+        if (entry == null) return;
+        final String pos = currentPos();
+        if (pos == null) return;
+        final String auto = bookmarkLabel();
+        AlertDialog.Builder b = dialog();
+        EditText input = new EditText(b.getContext());
+        input.setSingleLine(true);
+        input.setHint(R.string.bookmark_name);
+        input.setText(auto);
+        input.setSelection(input.getText().length());
+        FrameLayout box = new FrameLayout(b.getContext());
+        box.setPadding(dp(20), dp(8), dp(20), 0);
+        box.addView(input);
+        AlertDialog d = b.setTitle(R.string.bookmark).setView(box)
+                .setPositiveButton(android.R.string.ok, (dlg, w) -> {
+                    entry.marks = Marks.write(Marks.add(Marks.read(entry.marks), pos, input.getText().toString(), auto, System.currentTimeMillis()));
+                    library.put(entry);
+                    Toast.makeText(this, R.string.bookmark_added, Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton(android.R.string.cancel, null).create();
+        d.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
+        d.show();
+    }
+
+    private void showBookmarks() {
+        if (entry == null) return;
+        final List<Marks.Mark> marks = new ArrayList<>(Marks.read(entry.marks));
+        if (marks.isEmpty()) {
+            Toast.makeText(this, R.string.no_bookmarks, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        AlertDialog.Builder b = dialog();
+        final ListView list = new ListView(b.getContext());
+        final ArrayAdapter<String> adapter = new ArrayAdapter<>(b.getContext(), android.R.layout.simple_list_item_1, labels(marks));
+        list.setAdapter(adapter);
+        final AlertDialog d = b.setTitle(R.string.bookmarks).setView(list).setNegativeButton(android.R.string.cancel, null).create();
+        list.setOnItemClickListener((p, v, pos, id) -> {
+            jump(marks.get(pos).pos);
+            d.dismiss();
+            showUi(false);
+        });
+        list.setOnItemLongClickListener((p, v, pos, id) -> {
+            dialog().setTitle(R.string.delete_bookmark).setMessage(marks.get(pos).label)
+                    .setPositiveButton(R.string.delete, (dlg, w) -> {
+                        marks.remove(pos);
+                        entry.marks = Marks.write(marks);
+                        library.put(entry);
+                        if (marks.isEmpty()) d.dismiss();
+                        else {
+                            adapter.clear();
+                            adapter.addAll(labels(marks));
+                        }
+                    })
+                    .setNegativeButton(android.R.string.cancel, null).show();
+            return true;
+        });
+        d.show();
+    }
+
+    private static List<String> labels(List<Marks.Mark> marks) {
+        List<String> s = new ArrayList<>();
+        for (Marks.Mark m : marks) s.add(m.label == null || m.label.isEmpty() ? m.pos : m.label);
+        return s;
+    }
+
+    private void jump(String pos) {
+        if (pos == null) return;
+        try {
+            String[] p = pos.split(":");
+            if (pageView != null && p.length >= 2 && "p".equals(p[0])) {
+                float off = p.length > 2 ? Float.parseFloat(p[2]) : 0;
+                pageView.goTo(Integer.parseInt(p[1]), off);
+            } else if (flowView != null && p.length >= 3 && "c".equals(p[0])) {
+                float frac = p.length > 3 ? Float.parseFloat(p[3]) : 0;
+                flowView.goPos(Integer.parseInt(p[1]), Integer.parseInt(p[2]), frac);
+            }
+            updateLabels();
+            scheduleSave();
+        } catch (RuntimeException ignored) {}
     }
 
     private void showInfo() {

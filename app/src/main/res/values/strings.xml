@@ -80,6 +80,13 @@
     <string name="rotation_auto">Auto</string>
     <string name="rotation_portrait">Portrait</string>
     <string name="rotation_landscape">Landscape</string>
+    <string name="bookmark">Bookmark</string>
+    <string name="bookmarks">Bookmarks</string>
+    <string name="bookmark_name">Name</string>
+    <string name="bookmark_added">Bookmark added</string>
+    <string name="no_bookmarks">No bookmarks yet</string>
+    <string name="delete_bookmark">Delete this bookmark?</string>
+    <string name="delete">Delete</string>
     <string name="go_to_page">Go to page</string>
     <string name="go_to_percent">Go to position (%)</string>
     <string name="book_info">Information</string>
