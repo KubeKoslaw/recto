@@ -166,6 +166,39 @@ public class ArchiveTest {
         assertArrayEquals(big, z.read(z.find("big.bin")));
     }
 
+    /** One RAR 4 file header and no payload. {@code flags} bit 0 marks a volume split. */
+    static byte[] rar4(String name, int flags) {
+        byte[] nb = name.getBytes(StandardCharsets.US_ASCII);
+        int hsize = 32 + nb.length;
+        byte[] rar = new byte[7 + hsize];
+        System.arraycopy(new byte[]{'R', 'a', 'r', '!', 0x1a, 7, 0}, 0, rar, 0, 7);
+        int o = 7;
+        rar[o + 2] = 0x74;
+        rar[o + 3] = (byte) flags;
+        rar[o + 5] = (byte) hsize;
+        rar[o + 25] = 0x30; // stored
+        rar[o + 26] = (byte) nb.length;
+        System.arraycopy(nb, 0, rar, o + 32, nb.length);
+        return rar;
+    }
+
+    @Test public void rarSplitImageIsReported() throws Exception {
+        RarArchive split = new RarArchive(new BytesSeekable(rar4("01.jpg", 0x01)));
+        assertTrue(split.hasSplitImage());
+        assertEquals(0, split.entries().size());
+        assertFalse(split.hasCompressed());
+
+        RarArchive note = new RarArchive(new BytesSeekable(rar4("note.txt", 0x01)));
+        assertFalse(note.hasSplitImage());
+        assertEquals(0, note.entries().size());
+
+        RarArchive whole = new RarArchive(new BytesSeekable(rar4("01.jpg", 0)));
+        assertFalse(whole.hasSplitImage());
+        assertFalse(whole.hasCompressed());
+        assertEquals(1, whole.entries().size());
+        assertEquals("01.jpg", whole.entries().get(0).name);
+    }
+
     @Test(expected = java.io.IOException.class)
     public void rarShortFileHeaderIsCorrupt() throws Exception {
         byte[] rar = new byte[64];

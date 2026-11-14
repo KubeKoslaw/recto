@@ -105,7 +105,7 @@
     <string name="err_memory">Not enough memory to open this file.</string>
     <string name="err_too_large">The file is too large.</string>
     <string name="err_no_images">No pictures found in this archive.</string>
-    <string name="err_rar">This CBR archive uses RAR compression, which no free software library can decode. Most comics are stored uncompressed and open fine; convert this one to CBZ (zip) to read it.</string>
+    <string name="err_rar">This CBR archive uses RAR compression or is split across volumes, which no free software library can decode. Most comics are stored uncompressed in a single file and open fine; convert this one to CBZ (zip) to read it.</string>
     <string name="err_7z">7-Zip archives (CB7) are not supported. Convert the file to CBZ (zip).</string>
     <string name="err_pdf_password">Password-protected PDFs can only be opened on Android 15 or newer.</string>
 </resources>

@@ -100,7 +100,7 @@
     <string name="err_memory">Za mało pamięci, aby otworzyć ten plik.</string>
     <string name="err_too_large">Plik jest za duży.</string>
     <string name="err_no_images">W tym archiwum nie ma obrazów.</string>
-    <string name="err_rar">To archiwum CBR używa kompresji RAR, której nie obsługuje żadna wolna biblioteka. Większość komiksów jest zapisana bez kompresji i otwiera się bez problemu; ten przekonwertuj do CBZ (zip).</string>
+    <string name="err_rar">To archiwum CBR używa kompresji RAR albo jest podzielone na części, czego nie obsługuje żadna wolna biblioteka. Większość komiksów jest zapisana bez kompresji w jednym pliku i otwiera się bez problemu; ten przekonwertuj do CBZ (zip).</string>
     <string name="err_7z">Archiwa 7-Zip (CB7) nie są obsługiwane. Przekonwertuj plik do CBZ (zip).</string>
     <string name="err_pdf_password">PDF-y chronione hasłem można otworzyć tylko na Androidzie 15 lub nowszym.</string>
 </resources>

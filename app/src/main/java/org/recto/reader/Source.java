@@ -69,6 +69,8 @@ final class Source {
 
     /** Cached copies of streamed documents kept besides the one being opened. */
     private static final int KEEP_COPIES = 2;
+    /** A non-seekable stream is copied once. Anything larger is refused before it fills the cache. */
+    private static final long COPY_CAP = 2L << 30;
     private static final Object CACHE_LOCK = new Object();
 
     /**
@@ -107,7 +109,12 @@ final class Source {
             File tmp = new File(dir, dst.getName() + ".part");
             try (InputStream in = new ParcelFileDescriptor.AutoCloseInputStream(fd); OutputStream out = new FileOutputStream(tmp)) {
                 byte[] buf = new byte[65536];
-                for (int n; (n = in.read(buf)) > 0; ) out.write(buf, 0, n);
+                long total = 0;
+                for (int n; (n = in.read(buf)) > 0; ) {
+                    if (total + n > COPY_CAP) throw new Opener.Failure(R.string.err_too_large);
+                    total += n;
+                    out.write(buf, 0, n);
+                }
             } catch (IOException e) {
                 tmp.delete();
                 throw e;

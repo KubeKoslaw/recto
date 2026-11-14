@@ -42,6 +42,17 @@ public class BooksTest {
         assertTrue(FlowBook.decodeMarkup(cp).contains("Привет"));
     }
 
+    @Test public void comicInfoMangaFlag() {
+        assertTrue(Opener.mangaRtl("Yes"));
+        assertTrue(Opener.mangaRtl("yes"));
+        assertTrue(Opener.mangaRtl("YesAndRightToLeft"));
+        assertTrue(Opener.mangaRtl("yesandrighttoleft"));
+        assertFalse(Opener.mangaRtl("No"));
+        assertFalse(Opener.mangaRtl("Unknown"));
+        assertFalse(Opener.mangaRtl(""));
+        assertFalse(Opener.mangaRtl(null));
+    }
+
     // ---- EPUB ---------------------------------------------------------------------------------
 
     static byte[] epub(boolean withNav) throws Exception {
