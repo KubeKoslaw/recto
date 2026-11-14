@@ -4,6 +4,7 @@ import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
@@ -42,8 +43,12 @@ import org.recto.reader.fixed.PageView;
 import org.recto.reader.fixed.PdfSource;
 import org.recto.reader.flow.FlowBook;
 import org.recto.reader.flow.FlowView;
+import org.recto.reader.flow.UserFont;
+import org.recto.reader.marks.Marks;
+import org.recto.reader.screen.Light;
 
 import java.io.FileNotFoundException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -55,7 +60,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /** Shows one document: fixed pages ({@link PageView}) or reflowable text ({@link FlowView}). */
 public final class ReaderActivity extends Activity implements PageView.Listener, FlowView.Listener {
     private static final int MODE_PAGED = 0, MODE_CONTINUOUS = 1;
-    private static final int REQ_STORAGE = 7;
+    private static final int REQ_STORAGE = 7, REQ_FONT = 8;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService bg = Executors.newSingleThreadExecutor();
@@ -104,6 +109,7 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
 
         edgeToEdge();
         if (prefs.keepScreenOn()) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        applyBrightness();
         applyOrientation();
         setSystemBars(false);
 
@@ -245,6 +251,17 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
     }
 
     @SuppressLint("SourceLockedOrientationActivity") // user-chosen rotation lock
+    private void applyBrightness() {
+        WindowManager.LayoutParams lp = getWindow().getAttributes();
+        lp.screenBrightness = Light.window(prefs.brightness());
+        getWindow().setAttributes(lp);
+    }
+
+    private String brightnessLabel() {
+        float v = prefs.brightness();
+        return Light.system(v) ? getString(R.string.brightness_system) : Light.percent(v) + "%";
+    }
+
     private void applyOrientation() {
         switch (prefs.orientation()) {
             case 1: setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT); break;
@@ -308,6 +325,81 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
         if (code != REQ_STORAGE) return;
         if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) open(null);
         else fail(getString(R.string.err_access));
+    }
+
+    @Override protected void onActivityResult(int request, int result, Intent data) {
+        super.onActivityResult(request, result, data);
+        if (request != REQ_FONT) return;
+        if (result != RESULT_OK || data == null || data.getData() == null) {
+            if (panelVisible()) buildPanel();
+            return;
+        }
+        final Uri picked = data.getData();
+        final String name = fontName(picked);
+        if (!UserFont.supported(name)) {
+            Toast.makeText(this, R.string.font_bad, Toast.LENGTH_SHORT).show();
+            if (panelVisible()) buildPanel();
+            return;
+        }
+        bg.execute(() -> {
+            long stored;
+            try (InputStream in = getContentResolver().openInputStream(picked)) {
+                stored = in == null ? 0 : UserFont.store(in, UserFont.file(getFilesDir()));
+            } catch (Exception e) {
+                stored = 0;
+            }
+            final long n = stored;
+            handler.post(() -> {
+                if (destroyed) return;
+                if (n < 0) Toast.makeText(this, R.string.err_too_large, Toast.LENGTH_SHORT).show();
+                else if (n == 0) Toast.makeText(this, R.string.font_bad, Toast.LENGTH_SHORT).show();
+                else {
+                    prefs.put("userFontMime", UserFont.mime(name));
+                    prefs.put("font", UserFont.SLOT);
+                    if (flowView != null) flowView.setUserFont(UserFont.file(getFilesDir()), prefs.userFontMime());
+                    applyFlowStyle();
+                    Toast.makeText(this, R.string.saved, Toast.LENGTH_SHORT).show();
+                }
+                if (panelVisible()) buildPanel();
+            });
+        });
+    }
+
+    private String fontName(Uri u) {
+        try (android.database.Cursor c = getContentResolver().query(u, new String[]{android.provider.OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (c != null && c.moveToFirst() && c.getString(0) != null) return c.getString(0);
+        } catch (Exception ignored) {}
+        String last = u.getLastPathSegment();
+        return last == null ? "" : last;
+    }
+
+    private void chooseFont(int i) {
+        if (i != UserFont.SLOT) {
+            prefs.put("font", i);
+            applyFlowStyle();
+            return;
+        }
+        if (prefs.font() != UserFont.SLOT && UserFont.file(getFilesDir()).isFile()) {
+            prefs.put("font", UserFont.SLOT);
+            if (flowView != null) flowView.setUserFont(UserFont.file(getFilesDir()), prefs.userFontMime());
+            applyFlowStyle();
+            return;
+        }
+        pickFont();
+    }
+
+    private void pickFont() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*");
+        i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
+                "font/ttf", "font/otf", "font/woff", "application/x-font-ttf",
+                "application/x-font-otf", "application/font-sfnt", "application/octet-stream"});
+        try {
+            startActivityForResult(i, REQ_FONT);
+        } catch (ActivityNotFoundException e) {
+            Toast.makeText(this, R.string.no_picker, Toast.LENGTH_LONG).show();
+        }
     }
 
     private void askPassword() {
@@ -409,6 +501,7 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
         flowView.setListener(this);
         flowView.setTapZones(prefs.tapZones());
         flowView.setSpreadMode(prefs.spread());
+        flowView.setUserFont(UserFont.file(getFilesDir()), prefs.userFontMime());
         content.addView(flowView, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         int ch = 0, tp = -1;
         float frac = 0;
@@ -569,17 +662,37 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
         handler.removeCallbacks(saveLater);
         if (entry == null) return;
         entry.opened = System.currentTimeMillis();
-        if (pageView != null && pageView.getCount() > 0) {
-            int p = pageView.getPage();
-            entry.pos = "p:" + p + ":" + String.format(Locale.ROOT, "%.4f", pageView.pageOffset());
-            entry.progress = (p + 1f) / pageView.getCount();
-            library.put(entry);
-        } else if (flowView != null && !flowView.isLoading() && flowView.chapter() >= 0) {
+        String pos = currentPos();
+        if (pos == null) return;
+        entry.pos = pos;
+        if (pageView != null && pageView.getCount() > 0) entry.progress = (pageView.getPage() + 1f) / pageView.getCount();
+        else if (flowView != null) entry.progress = flowView.progress();
+        library.put(entry);
+    }
+
+    /** Same encoding as {@link #savePosition()}: {@code p:page:offset} or {@code c:chapter:text:fraction}. */
+    private String currentPos() {
+        if (pageView != null && pageView.getCount() > 0)
+            return "p:" + pageView.getPage() + ":" + String.format(Locale.ROOT, "%.4f", pageView.pageOffset());
+        if (flowView != null && !flowView.isLoading() && flowView.chapter() >= 0) {
             float frac = flowView.pages() > 0 ? flowView.page() / (float) flowView.pages() : 0;
-            entry.pos = "c:" + flowView.chapter() + ":" + flowView.textPos() + ":" + String.format(Locale.ROOT, "%.4f", frac);
-            entry.progress = flowView.progress();
-            library.put(entry);
+            return "c:" + flowView.chapter() + ":" + flowView.textPos() + ":" + String.format(Locale.ROOT, "%.4f", frac);
         }
+        return null;
+    }
+
+    private String bookmarkLabel() {
+        if (pageView != null && pageView.getCount() > 0) {
+            int p = pageView.getPage(), m = pageView.getMate();
+            if (m >= 0) return (Math.min(p, m) + 1) + "\u2013" + (Math.max(p, m) + 1);
+            return getString(R.string.page_n, p + 1);
+        }
+        if (flowView != null && flowView.book() != null) {
+            String ch = chapterTitle(flowView.book(), flowView.chapter());
+            if (ch != null && !ch.isEmpty()) return ch;
+            return Math.round(flowView.progress() * 100) + "%";
+        }
+        return "";
     }
 
     // ---- listeners from the views -------------------------------------------------------------
@@ -756,8 +869,8 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
                 applyFlowStyle();
                 return prefs.fontSize() + "%";
             });
-            choices(R.string.font, new int[]{R.string.font_book, R.string.font_serif, R.string.font_sans, R.string.font_mono},
-                    prefs.font(), i -> { prefs.put("font", i); applyFlowStyle(); });
+            choices(R.string.font, new int[]{R.string.font_book, R.string.font_serif, R.string.font_sans, R.string.font_mono, R.string.font_custom},
+                    Math.min(prefs.font(), UserFont.SLOT), this::chooseFont);
             final int[] lh = {0, 12, 14, 16, 18, 20};
             int cur = 0;
             for (int i = 0; i < lh.length; i++) if (lh[i] == prefs.lineHeight()) cur = i;
@@ -807,6 +920,11 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
                     if (pageView != null) pageView.setSpreadMode(i);
                     updateLabels();
                 });
+        stepper(R.string.brightness, brightnessLabel(), d -> {
+            prefs.put("brightness", Light.step(prefs.brightness(), d));
+            applyBrightness();
+            return brightnessLabel();
+        });
         choices(R.string.rotation, new int[]{R.string.rotation_auto, R.string.rotation_portrait, R.string.rotation_landscape},
                 prefs.orientation(), i -> { prefs.put("orientation", i); applyOrientation(); });
     }
@@ -916,9 +1034,13 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
     private void showMore(View anchor) {
         PopupMenu m = new PopupMenu(this, anchor);
         m.getMenu().add(0, 1, 0, pageView != null ? R.string.go_to_page : R.string.go_to_percent);
+        m.getMenu().add(0, 3, 0, R.string.bookmark);
+        m.getMenu().add(0, 4, 0, R.string.bookmarks);
         m.getMenu().add(0, 2, 0, R.string.book_info);
         m.setOnMenuItemClickListener(item -> {
             if (item.getItemId() == 1) showGoTo();
+            else if (item.getItemId() == 3) addBookmark();
+            else if (item.getItemId() == 4) showBookmarks();
             else showInfo();
             return true;
         });
@@ -944,6 +1066,88 @@ public final class ReaderActivity extends Activity implements PageView.Listener,
                 .setNegativeButton(android.R.string.cancel, null).create();
         d.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
         d.show();
+    }
+
+    private void addBookmark() {
+        if (entry == null) return;
+        final String pos = currentPos();
+        if (pos == null) return;
+        final String auto = bookmarkLabel();
+        AlertDialog.Builder b = dialog();
+        EditText input = new EditText(b.getContext());
+        input.setSingleLine(true);
+        input.setHint(R.string.bookmark_name);
+        input.setText(auto);
+        input.setSelection(input.getText().length());
+        FrameLayout box = new FrameLayout(b.getContext());
+        box.setPadding(dp(20), dp(8), dp(20), 0);
+        box.addView(input);
+        AlertDialog d = b.setTitle(R.string.bookmark).setView(box)
+                .setPositiveButton(android.R.string.ok, (dlg, w) -> {
+                    entry.marks = Marks.write(Marks.add(Marks.read(entry.marks), pos, input.getText().toString(), auto, System.currentTimeMillis()));
+                    library.put(entry);
+                    Toast.makeText(this, R.string.bookmark_added, Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton(android.R.string.cancel, null).create();
+        d.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
+        d.show();
+    }
+
+    private void showBookmarks() {
+        if (entry == null) return;
+        final List<Marks.Mark> marks = new ArrayList<>(Marks.read(entry.marks));
+        if (marks.isEmpty()) {
+            Toast.makeText(this, R.string.no_bookmarks, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        AlertDialog.Builder b = dialog();
+        final ListView list = new ListView(b.getContext());
+        final ArrayAdapter<String> adapter = new ArrayAdapter<>(b.getContext(), android.R.layout.simple_list_item_1, labels(marks));
+        list.setAdapter(adapter);
+        final AlertDialog d = b.setTitle(R.string.bookmarks).setView(list).setNegativeButton(android.R.string.cancel, null).create();
+        list.setOnItemClickListener((p, v, pos, id) -> {
+            jump(marks.get(pos).pos);
+            d.dismiss();
+            showUi(false);
+        });
+        list.setOnItemLongClickListener((p, v, pos, id) -> {
+            dialog().setTitle(R.string.delete_bookmark).setMessage(marks.get(pos).label)
+                    .setPositiveButton(R.string.delete, (dlg, w) -> {
+                        marks.remove(pos);
+                        entry.marks = Marks.write(marks);
+                        library.put(entry);
+                        if (marks.isEmpty()) d.dismiss();
+                        else {
+                            adapter.clear();
+                            adapter.addAll(labels(marks));
+                        }
+                    })
+                    .setNegativeButton(android.R.string.cancel, null).show();
+            return true;
+        });
+        d.show();
+    }
+
+    private static List<String> labels(List<Marks.Mark> marks) {
+        List<String> s = new ArrayList<>();
+        for (Marks.Mark m : marks) s.add(m.label == null || m.label.isEmpty() ? m.pos : m.label);
+        return s;
+    }
+
+    private void jump(String pos) {
+        if (pos == null) return;
+        try {
+            String[] p = pos.split(":");
+            if (pageView != null && p.length >= 2 && "p".equals(p[0])) {
+                float off = p.length > 2 ? Float.parseFloat(p[2]) : 0;
+                pageView.goTo(Integer.parseInt(p[1]), off);
+            } else if (flowView != null && p.length >= 3 && "c".equals(p[0])) {
+                float frac = p.length > 3 ? Float.parseFloat(p[3]) : 0;
+                flowView.goPos(Integer.parseInt(p[1]), Integer.parseInt(p[2]), frac);
+            }
+            updateLabels();
+            scheduleSave();
+        } catch (RuntimeException ignored) {}
     }
 
     private void showInfo() {

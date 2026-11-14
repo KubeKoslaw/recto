@@ -32,6 +32,7 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.recto.reader.shelf.Shelf;
 import org.recto.reader.util.Text;
 
 import java.util.ArrayList;
@@ -88,6 +89,7 @@ public final class LibraryActivity extends Activity {
 
             @Override public void afterTextChanged(Editable s) { filter(); }
         });
+        buildShelf();
         if (!scannedThisRun && !folders().isEmpty()) {
             scannedThisRun = true;
             scan();
@@ -160,13 +162,50 @@ public final class LibraryActivity extends Activity {
 
     private void filter() {
         String q = query.getVisibility() == View.VISIBLE ? query.getText().toString().trim().toLowerCase(Locale.getDefault()) : "";
+        int mode = Shelf.filter(prefs.shelfFilter());
         shown.clear();
         for (Library.Book b : all) {
+            if (!Shelf.visible(mode, b.opened, b.progress)) continue;
             if (q.isEmpty() || (b.title != null && b.title.toLowerCase(Locale.getDefault()).contains(q))
                     || (b.author != null && b.author.toLowerCase(Locale.getDefault()).contains(q))) shown.add(b);
         }
+        final int sort = Shelf.sort(prefs.shelfSort());
+        java.util.Collections.sort(shown, (a, b) -> Shelf.compare(sort, a.title, a.author, a.opened, a.progress,
+                b.title, b.author, b.opened, b.progress));
         adapter.notifyDataSetChanged();
-        empty.setVisibility(all.isEmpty() ? View.VISIBLE : View.GONE);
+        if (shown.isEmpty() && !all.isEmpty()) empty.setText(R.string.shelf_empty);
+        else empty.setText(R.string.empty);
+        empty.setVisibility(shown.isEmpty() ? View.VISIBLE : View.GONE);
+    }
+
+    private void buildShelf() {
+        LinearLayout row = findViewById(R.id.shelfRow);
+        row.removeAllViews();
+        int sort = Shelf.sort(prefs.shelfSort());
+        int[] sortLabels = {R.string.sort_recent, R.string.sort_title, R.string.sort_author, R.string.sort_progress};
+        for (int i = 0; i < sortLabels.length; i++) shelfChip(row, sortLabels[i], i == sort, "shelfSort", i);
+        View gap = new View(this);
+        row.addView(gap, new LinearLayout.LayoutParams(dp(10), 1));
+        int filter = Shelf.filter(prefs.shelfFilter());
+        int[] filterLabels = {R.string.shelf_all, R.string.shelf_new, R.string.shelf_reading, R.string.shelf_finished};
+        for (int i = 0; i < filterLabels.length; i++) shelfChip(row, filterLabels[i], i == filter, "shelfFilter", i);
+    }
+
+    private void shelfChip(LinearLayout row, int label, boolean on, String key, int value) {
+        TextView t = new TextView(this);
+        t.setText(label);
+        t.setTextSize(13);
+        t.setGravity(android.view.Gravity.CENTER);
+        t.setPadding(dp(12), dp(6), dp(12), dp(6));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.setMarginEnd(dp(6));
+        row.addView(t, lp);
+        chip(t, on);
+        t.setOnClickListener(v -> {
+            prefs.put(key, value);
+            buildShelf();
+            filter();
+        });
     }
 
     private void toggleFilter() {

@@ -30,7 +30,9 @@ Android 7.0 and Android 16.
   them (and their subfolders) show up automatically.
 * "Open with" from any file manager, `content://` and `file://`.
 * Remembers the position in every book, including across font size changes and rotation
-  (the reading position is anchored to a character, so it never drifts).
+  (the reading position is anchored to a character, so it never drifts). Bookmarks keep
+  extra positions in the same book, with a name, and jump back to them.
+* Library sort (recent, title, author, progress) and a filter for new, reading and finished books.
 * Tap left/right edge or swipe to turn pages, tap the middle for the menu; volume keys and
   keyboard / D-pad / page keys turn pages too. Page turn animations can be switched off (e-ink).
 * Pinch or double-tap zoom with sharp re-rendering, long webtoon strips rendered in tiles.
@@ -40,7 +42,10 @@ Android 7.0 and Android 16.
   page of a PDF / comic stays alone like a cover, landscape pages stay alone and manga pairs read
   right to left. Setting *Two pages*: *Large screen* (default), *Off*, or *Landscape too* (also
   phones in landscape).
-* Reflowable books: Light / Sepia / Dark / Black themes, book or system fonts, line spacing,
+* Reading brightness can follow the system or stay at a chosen level. One custom font
+  (TTF, OTF or WOFF) can be used for reflowable books; it is copied into the app and
+  served only inside the page, with no file path exposed.
+* Reflowable books: Light / Sepia / Dark / Black themes, book, system or custom fonts, line spacing,
   margins, justification, hyphenation, paged (CSS columns) or scroll mode, table of contents,
   full-text search, internal links and footnotes with "back".
 * PDF: continuous or paged, fit width / page, dark mode inversion (hue-preserving), page links,
