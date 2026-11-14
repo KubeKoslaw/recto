@@ -28,6 +28,8 @@ final class Library {
         int mode = -1, dir = -1, fit = -1, invert = -1;
         /** Found by a folder scan (as opposed to opened directly). */
         boolean folder;
+        /** Opened once and recognised as a comic, so the shelf shows the cover. */
+        boolean comic;
         /** Bookmarks, newest first. Null when the book has none. */
         JSONArray marks;
 
@@ -36,6 +38,7 @@ final class Library {
             o.put("id", id).put("uri", uri).put("title", title).put("author", author).put("format", format).put("pos", pos)
                     .put("size", size).put("added", added).put("opened", opened).put("progress", (double) progress)
                     .put("pages", pages).put("mode", mode).put("dir", dir).put("fit", fit).put("invert", invert).put("folder", folder);
+            if (comic) o.put("comic", true);
             if (marks != null && marks.length() > 0) o.put("marks", marks);
             return o;
         }
@@ -44,7 +47,7 @@ final class Library {
             Book b = new Book();
             b.id = id; b.uri = uri; b.title = title; b.author = author; b.format = format; b.pos = pos;
             b.size = size; b.added = added; b.opened = opened; b.progress = progress; b.pages = pages;
-            b.mode = mode; b.dir = dir; b.fit = fit; b.invert = invert; b.folder = folder;
+            b.mode = mode; b.dir = dir; b.fit = fit; b.invert = invert; b.folder = folder; b.comic = comic;
             if (marks != null) {
                 try {
                     b.marks = new JSONArray(marks.toString());
@@ -73,6 +76,7 @@ final class Library {
             b.fit = o.optInt("fit", -1);
             b.invert = o.optInt("invert", -1);
             b.folder = o.optBoolean("folder");
+            b.comic = o.optBoolean("comic");
             b.marks = o.optJSONArray("marks");
             return b;
         }

@@ -2,6 +2,8 @@ package org.recto.reader.shelf;
 
 import org.recto.reader.util.Natural;
 
+import java.util.Locale;
+
 /** How the library list is narrowed and ordered. Pure, so the activity only applies the result. */
 public final class Shelf {
     public static final int SORT_RECENT = 0, SORT_TITLE = 1, SORT_AUTHOR = 2, SORT_PROGRESS = 3;
@@ -9,7 +11,33 @@ public final class Shelf {
     /** A book counts as finished once this much of it has been read. */
     public static final float FINISHED = 0.98f;
 
+    private static final int[] SPINE = {0xff2f6f5e, 0xff8a4b2a, 0xff3d5a99, 0xff7b3f7a, 0xff5b6b2f, 0xff9a3b3b};
+
     private Shelf() {}
+
+    /**
+     * Comics and pictures stand cover-forward. Novels and documents are spines, unless the file
+     * has already been opened and recognised as a comic (fixed-layout EPUB, comic PDF).
+     */
+    public static boolean face(String format, boolean comic) {
+        if (comic) return true;
+        if (format == null) return false;
+        switch (format.toUpperCase(Locale.ROOT)) {
+            case "CBZ": case "CBR": case "CBT":
+            case "ZIP": case "RAR": case "TAR":
+            case "IMG": case "JPG": case "JPEG": case "PNG": case "WEBP": case "GIF": case "BMP":
+            case "HEIF": case "HEIC": case "AVIF":
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /** Stable spine color for a book id. */
+    public static int spineColor(String id) {
+        int h = id == null ? 0 : id.hashCode();
+        return SPINE[Math.floorMod(h, SPINE.length)];
+    }
 
     public static int sort(int value) {
         return value >= SORT_RECENT && value <= SORT_PROGRESS ? value : SORT_RECENT;

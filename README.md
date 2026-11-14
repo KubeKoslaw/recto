@@ -26,8 +26,10 @@ Android 7.0 and Android 16.
 
 ## Features
 
-* Library of recently read books with covers and progress. Optionally add folders and books inside
-  them (and their subfolders) show up automatically.
+* Library of recently read books on a shelf: novels and documents stand as spines, comics and
+  manga as covers, with a bookmark ribbon for progress. Optionally add folders and books inside
+  them (and their subfolders) show up automatically. Opening a book grows it from the shelf
+  when page-turn animations are on.
 * "Open with" from any file manager, `content://` and `file://`.
 * Remembers the position in every book, including across font size changes and rotation
   (the reading position is anchored to a character, so it never drifts). Bookmarks keep

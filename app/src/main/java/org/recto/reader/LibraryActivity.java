@@ -12,27 +12,23 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.DocumentsContract;
+import android.graphics.Rect;
 import android.text.Editable;
 import android.text.TextWatcher;
-import android.text.format.DateUtils;
 import android.util.TypedValue;
-import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.InputMethodManager;
-import android.widget.BaseAdapter;
 import android.widget.EditText;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.ListView;
 import android.widget.PopupMenu;
-import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import org.recto.reader.shelf.Shelf;
+import org.recto.reader.shelf.ShelfBoard;
 import org.recto.reader.util.Text;
 
 import java.util.ArrayList;
@@ -52,12 +48,13 @@ public final class LibraryActivity extends Activity {
     private final ExecutorService bg = Executors.newSingleThreadExecutor();
     private Prefs prefs;
     private Library library;
-    private ListView list;
+    private ScrollView scroller;
+    private ShelfBoard board;
     private TextView empty;
     private EditText query;
-    private final Adapter adapter = new Adapter();
     private List<Library.Book> all = new ArrayList<>();
     private final List<Library.Book> shown = new ArrayList<>();
+    private Rect menuBounds;
     private int themeApplied;
 
     @Override protected void onCreate(Bundle state) {
@@ -69,14 +66,17 @@ public final class LibraryActivity extends Activity {
         library = Library.get(this);
         setContentView(R.layout.activity_library);
         edgeToEdge();
-        list = findViewById(R.id.list);
+        scroller = findViewById(R.id.scroller);
+        board = findViewById(R.id.board);
         empty = findViewById(R.id.empty);
         query = findViewById(R.id.query);
-        list.setAdapter(adapter);
-        list.setOnItemClickListener((p, v, pos, id) -> openBook(shown.get(pos)));
-        list.setOnItemLongClickListener((p, v, pos, id) -> {
-            bookMenu(shown.get(pos));
-            return true;
+        board.setPick(new ShelfBoard.Pick() {
+            @Override public void open(int index, Rect screen) { openBook(shown.get(index), screen); }
+
+            @Override public void menu(int index, Rect screen) {
+                menuBounds = screen;
+                bookMenu(shown.get(index));
+            }
         });
         findViewById(R.id.open).setOnClickListener(v -> pickFile());
         findViewById(R.id.folder).setOnClickListener(v -> pickFolder());
@@ -137,7 +137,7 @@ public final class LibraryActivity extends Activity {
                 l = ins.getSystemWindowInsetLeft(); r = ins.getSystemWindowInsetRight();
             }
             v.setPadding(l, t, r, 0);
-            list.setPadding(0, 0, 0, b + dp(96));
+            scroller.setPadding(0, 0, 0, b + dp(96));
             ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) fab.getLayoutParams();
             lp.bottomMargin = b + dp(20);
             fab.setLayoutParams(lp);
@@ -172,7 +172,23 @@ public final class LibraryActivity extends Activity {
         final int sort = Shelf.sort(prefs.shelfSort());
         java.util.Collections.sort(shown, (a, b) -> Shelf.compare(sort, a.title, a.author, a.opened, a.progress,
                 b.title, b.author, b.opened, b.progress));
-        adapter.notifyDataSetChanged();
+        List<ShelfBoard.Slot> slots = new ArrayList<>();
+        for (Library.Book b : shown) {
+            boolean face = Shelf.face(b.format, b.comic);
+            ShelfBoard.Slot slot = new ShelfBoard.Slot(b.id, b.title, face, b.opened > 0 ? b.progress : 0f, Shelf.spineColor(b.id));
+            if (face) {
+                Bitmap bmp = Covers.cached(b.id);
+                slot.cover = bmp;
+                if (bmp == null) Covers.load(this, b, (id, loaded) -> runOnUiThread(() -> {
+                    if (!isDestroyed()) board.setCover(id, loaded);
+                }));
+            }
+            slots.add(slot);
+        }
+        board.setNight(isNight());
+        board.setMotion(prefs.animations());
+        board.setSlots(slots);
+        scroller.setBackgroundColor(board.wallColor());
         if (shown.isEmpty() && !all.isEmpty()) empty.setText(R.string.shelf_empty);
         else empty.setText(R.string.empty);
         empty.setVisibility(shown.isEmpty() ? View.VISIBLE : View.GONE);
@@ -222,70 +238,6 @@ public final class LibraryActivity extends Activity {
         filter();
     }
 
-    private static final int[] BADGE = {0xff2f6f5e, 0xff8a4b2a, 0xff3d5a99, 0xff7b3f7a, 0xff5b6b2f, 0xff9a3b3b};
-
-    private static final class Holder {
-        TextView title, sub, pct, badge;
-        ProgressBar bar;
-        ImageView cover;
-    }
-
-    private final class Adapter extends BaseAdapter {
-        @Override public int getCount() { return shown.size(); }
-
-        @Override public Object getItem(int i) { return shown.get(i); }
-
-        @Override public long getItemId(int i) { return i; }
-
-        @Override public View getView(int pos, View v, ViewGroup parent) {
-            Holder h;
-            if (v == null) {
-                v = LayoutInflater.from(LibraryActivity.this).inflate(R.layout.item_book, parent, false);
-                h = new Holder();
-                h.title = v.findViewById(R.id.title);
-                h.sub = v.findViewById(R.id.sub);
-                h.pct = v.findViewById(R.id.pct);
-                h.badge = v.findViewById(R.id.badge);
-                h.bar = v.findViewById(R.id.bar);
-                h.cover = v.findViewById(R.id.cover);
-                v.setTag(h);
-            } else {
-                h = (Holder) v.getTag();
-            }
-            Library.Book b = shown.get(pos);
-            h.title.setText(b.title != null ? b.title : "?");
-            String sub = b.format != null ? b.format : "";
-            if (b.author != null && !b.author.isEmpty()) sub = b.author + "  ·  " + sub;
-            if (b.opened > 0) {
-                long now = System.currentTimeMillis();
-                sub += "  \u00b7  " + (now - b.opened < DateUtils.MINUTE_IN_MILLIS ? getString(R.string.just_now)
-                        : DateUtils.getRelativeTimeSpanString(b.opened, now, DateUtils.MINUTE_IN_MILLIS));
-            }
-            h.sub.setText(sub);
-            h.bar.setProgress(Math.round(b.progress * 1000));
-            h.bar.setVisibility(b.opened > 0 ? View.VISIBLE : View.INVISIBLE);
-            h.pct.setText(b.opened > 0 ? Math.round(b.progress * 100) + "%" : getString(R.string.status_new));
-            h.badge.setText(b.format);
-            GradientDrawable g = new GradientDrawable();
-            g.setCornerRadius(dp(3));
-            g.setColor(BADGE[Math.abs(b.id.hashCode()) % BADGE.length]);
-            h.badge.setBackground(g);
-            // Thumbnails are decoded / generated off the UI thread; the row may be recycled meanwhile.
-            final ImageView cover = h.cover;
-            cover.setTag(b.id);
-            Bitmap bmp = Covers.cached(b.id);
-            cover.setImageBitmap(bmp);
-            if (bmp == null) {
-                Covers.load(LibraryActivity.this, b, (id, loaded) -> {
-                    if (loaded != null) runOnUiThread(() -> {
-                        if (id.equals(cover.getTag())) cover.setImageBitmap(loaded);
-                    });
-                });
-            }
-            return v;
-        }
-    }
-
     // ---- opening ----------------------------------------------------------------------------------
 
     private void pickFile() {
@@ -324,16 +276,34 @@ public final class LibraryActivity extends Activity {
         }
     }
 
-    private void openBook(Library.Book b) {
+    private void openBook(Library.Book b) { openBook(b, menuBounds); }
+
+    private void openBook(Library.Book b, Rect bounds) {
         if (b.uri == null) return;
-        startReader(Uri.parse(b.uri));
+        startReader(Uri.parse(b.uri), b, bounds);
     }
 
-    private void startReader(Uri uri) {
+    private void startReader(Uri uri) { startReader(uri, null, null); }
+
+    private void startReader(Uri uri, Library.Book b, Rect bounds) {
         Intent i = new Intent(this, ReaderActivity.class);
         i.setData(uri);
         i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        startActivity(i);
+        if (prefs.animations() && b != null && bounds != null && bounds.width() > 0) {
+            i.putExtra("recto.l", bounds.left);
+            i.putExtra("recto.t", bounds.top);
+            i.putExtra("recto.r", bounds.right);
+            i.putExtra("recto.b", bounds.bottom);
+            i.putExtra("recto.face", Shelf.face(b.format, b.comic));
+            i.putExtra("recto.title", b.title == null ? "" : b.title);
+            i.putExtra("recto.color", Shelf.spineColor(b.id));
+            i.putExtra("recto.progress", b.opened > 0 ? b.progress : 0f);
+            i.putExtra("recto.id", b.id);
+            startActivity(i);
+            overridePendingTransition(0, 0);
+        } else {
+            startActivity(i);
+        }
     }
 
     private void bookMenu(Library.Book b) {
