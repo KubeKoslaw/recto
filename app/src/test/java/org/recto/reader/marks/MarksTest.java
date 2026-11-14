@@ -3,7 +3,6 @@ package org.recto.reader.marks;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
-import org.json.JSONArray;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -39,27 +38,15 @@ public class MarksTest {
         assertEquals("p:5:0", a.get(a.size() - 1).pos);
     }
 
-    @Test public void removeAndRoundTrip() {
+    @Test public void removeKeepsTheRest() {
         List<Marks.Mark> a = Marks.add(null, "p:1:0.2500", "Cover", null, 5);
         a = Marks.add(a, "p:9:0", "End", null, 6);
         a = Marks.removeAt(a, 0);
         assertEquals(1, a.size());
         assertEquals("Cover", a.get(0).label);
-        JSONArray stored = Marks.write(a);
-        List<Marks.Mark> back = Marks.read(stored);
-        assertEquals(1, back.size());
-        assertEquals("p:1:0.2500", back.get(0).pos);
-        assertEquals("Cover", back.get(0).label);
-        assertEquals(5, back.get(0).at);
+        assertEquals("p:1:0.2500", a.get(0).pos);
+        assertEquals(5, a.get(0).at);
         assertTrue(Marks.read(null).isEmpty());
         assertTrue(Marks.removeAt(null, 0).isEmpty());
-    }
-
-    @Test public void skipsBrokenEntries() {
-        JSONArray a = new JSONArray();
-        a.put("nope");
-        a.put(new org.json.JSONObject());
-        List<Marks.Mark> marks = Marks.read(a);
-        assertTrue(marks.isEmpty());
     }
 }

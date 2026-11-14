@@ -9,8 +9,8 @@ import org.junit.Test;
 public class LightTest {
     @Test public void bottomStepIsSystem() {
         assertTrue(Light.system(Light.step(0.05f, -1)));
-        assertEquals(Light.SYSTEM, Light.window(-0.4f));
-        assertEquals(Light.SYSTEM, Light.step(Light.SYSTEM, -1));
+        assertEquals(Light.SYSTEM, Light.window(-0.4f), 0f);
+        assertEquals(Light.SYSTEM, Light.step(Light.SYSTEM, -1), 0f);
     }
 
     @Test public void stepsUpAndClamps() {
